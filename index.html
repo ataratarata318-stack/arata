@@ -149,6 +149,29 @@
     color: #1a5d2b;
     margin-bottom: 4px;
   }
+  .bulk-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .bulk-label {
+    font-size: 12px;
+    font-weight: bold;
+    flex: 0 0 44px;
+  }
+  .bulk-select {
+    margin-top: 0;
+    flex: 2;
+  }
+  .bulk-apply-button {
+    margin-top: 0;
+    width: auto;
+    flex: 2;
+    padding: 6px 8px;
+    font-size: 12px;
+    background: #6a4fb3;
+  }
 </style>
 </head>
 <body>
@@ -186,6 +209,7 @@
   <h2 style="font-size:16px; margin-top:0;">登録した選手</h2>
   <div id="team-power-line" class="team-power-line"></div>
   <div id="tournament-week-note" class="empty-note" style="display:none;">大会期間中のため、今週は練習できません。</div>
+  <div id="bulk-practice-controls"></div>
   <div id="player-list"></div>
   <div id="empty-list-note" class="empty-note">まだ選手が登録されていません。</div>
 </div>
@@ -302,10 +326,35 @@
     return Object.values(player.stats).reduce((s, v) => s + v, 0);
   }
 
+  // 選手個人の能力は「弱小」のようなチーム向けの言葉ではなく、野球ゲームでおなじみのランク(G〜S)で表現する
+  const PLAYER_RANKS = [
+    { max: 99, label: "G" },
+    { max: 149, label: "F" },
+    { max: 199, label: "D" },
+    { max: 249, label: "C" },
+    { max: 299, label: "B" },
+    { max: 349, label: "A" },
+    { max: Infinity, label: "S" },
+  ];
+
   function playerTierDisplay(player) {
-    const index = powerTierIndex(playerPowerSum(player));
-    const stars = "★".repeat(index + 1) + "☆".repeat(POWER_TIERS.length - 1 - index);
-    return `${POWER_TIERS[index].label} ${stars}`;
+    const sum = playerPowerSum(player);
+    const index = PLAYER_RANKS.findIndex(rank => sum <= rank.max);
+    const stars = "★".repeat(index + 1) + "☆".repeat(PLAYER_RANKS.length - 1 - index);
+    return `ランク ${PLAYER_RANKS[index].label} ${stars}`;
+  }
+
+  function createPlayer(name, position) {
+    const { stats, talentLabel } = rollNewPlayerStats(position);
+    return {
+      name,
+      position,
+      stats,
+      talentLabel,
+      enrollYear: schoolYear,
+      practicedThisWeek: false,
+      selectedPracticeStatKey: practiceMenus[position][0].statKey,
+    };
   }
 
   function graduateAndRecruit() {
@@ -322,8 +371,7 @@
     for (let i = 0; i < recruitCount; i++) {
       const name = sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
       const position = allPositions[Math.floor(Math.random() * allPositions.length)];
-      const { stats, talentLabel } = rollNewPlayerStats(position);
-      players.push({ name, position, stats, talentLabel, enrollYear: schoolYear, practicedThisWeek: false });
+      players.push(createPlayer(name, position));
       recruitedNames.push(name);
     }
     return recruitedNames;
@@ -550,6 +598,7 @@
   });
 
   function renderPlayerList() {
+    renderBulkPracticeControls();
     playerListArea.innerHTML = "";
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
     teamPowerLine.textContent = players.length > 0 ? `チームの実力: ${currentTeamTierLabel()}` : "";
@@ -574,7 +623,7 @@
         : "";
 
       const menuOptions = practiceMenus[player.position]
-        .map(menu => `<option value="${menu.statKey}">${menu.label}</option>`)
+        .map(menu => `<option value="${menu.statKey}" ${menu.statKey === player.selectedPracticeStatKey ? "selected" : ""}>${menu.label}</option>`)
         .join("");
 
       const disablePractice = matchPending || player.practicedThisWeek;
@@ -604,6 +653,7 @@
   function practicePlayer(index, statKey) {
     const player = players[index];
     if (player.practicedThisWeek || isMatchPendingThisWeek()) return;
+    player.selectedPracticeStatKey = statKey;
     const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
     player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
     player.practicedThisWeek = true;
@@ -625,9 +675,7 @@
     }
 
     const position = positionInput.value;
-    const { stats, talentLabel } = rollNewPlayerStats(position);
-
-    players.push({ name, position, stats, talentLabel, enrollYear: schoolYear, practicedThisWeek: false });
+    players.push(createPlayer(name, position));
 
     nameInput.value = "";
     renderPlayerList();
@@ -640,6 +688,46 @@
       const select = playerListArea.querySelector(`.practice-select[data-index="${index}"]`);
       practicePlayer(index, select.value);
     }
+  });
+
+  playerListArea.addEventListener("change", (event) => {
+    if (event.target.classList.contains("practice-select")) {
+      const index = Number(event.target.dataset.index);
+      players[index].selectedPracticeStatKey = event.target.value;
+    }
+  });
+
+  const bulkPracticeArea = document.getElementById("bulk-practice-controls");
+
+  function renderBulkPracticeControls() {
+    bulkPracticeArea.innerHTML = "";
+    const positionsPresent = allPositions.filter(position => players.some(p => p.position === position));
+    if (positionsPresent.length === 0) return;
+
+    positionsPresent.forEach(position => {
+      const options = practiceMenus[position]
+        .map(menu => `<option value="${menu.statKey}">${menu.label}</option>`)
+        .join("");
+      const row = document.createElement("div");
+      row.className = "bulk-row";
+      row.innerHTML = `
+        <span class="bulk-label">${positionLabels[position]}</span>
+        <select class="bulk-select" data-position="${position}">${options}</select>
+        <button class="bulk-apply-button" data-position="${position}">この位置の全員に反映</button>
+      `;
+      bulkPracticeArea.appendChild(row);
+    });
+  }
+
+  bulkPracticeArea.addEventListener("click", (event) => {
+    if (!event.target.classList.contains("bulk-apply-button")) return;
+    const position = event.target.dataset.position;
+    const select = bulkPracticeArea.querySelector(`.bulk-select[data-position="${position}"]`);
+    const statKey = select.value;
+    players.forEach(player => {
+      if (player.position === position) player.selectedPracticeStatKey = statKey;
+    });
+    renderPlayerList();
   });
 
   renderCalendar();
