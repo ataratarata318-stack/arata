@@ -91,6 +91,44 @@
     color: #555;
     margin-bottom: 8px;
   }
+  #match-preview {
+    background: #fff7e0;
+    border: 1px solid #e0c060;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-top: 8px;
+    font-size: 12px;
+    text-align: center;
+  }
+  #match-preview .preview-stakes {
+    font-weight: bold;
+    color: #b3261e;
+    margin-top: 4px;
+  }
+  #tactics-card {
+    background: #eef3ec;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 8px;
+  }
+  #tactics-prompt {
+    font-size: 13px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  #tactics-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tactics-button {
+    margin-top: 0;
+    flex: 1 1 45%;
+    padding: 8px 6px;
+    font-size: 12px;
+    background: #3d7dd6;
+  }
   .box-score-wrap {
     overflow-x: auto;
   }
@@ -117,6 +155,12 @@
     margin-top: 8px;
     font-size: 12px;
     color: #777;
+  }
+  .mvp-line {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #e0a800;
   }
   .player {
     border-left: 4px solid #1a5d2b;
@@ -284,6 +328,19 @@
     padding: 4px 0;
     border-bottom: 1px solid #eee;
   }
+  .news-row {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 13px;
+    padding: 6px 0;
+    border-bottom: 1px dashed #ccc;
+  }
+  .news-row .news-date {
+    display: inline-block;
+    font-size: 11px;
+    color: #888;
+    margin-right: 6px;
+    font-family: "Hiragino Sans", "Meiryo", sans-serif;
+  }
   .rival-row .rival-name {
     font-weight: bold;
   }
@@ -308,11 +365,21 @@
 <div class="card">
   <div class="calendar-line" id="calendar-line"></div>
   <div class="status-line" id="status-line"></div>
+  <div id="match-preview" style="display:none;"></div>
   <button id="official-match-button" class="official-match-button" style="display:none;">公式戦を行う</button>
+  <div id="tactics-card" style="display:none;">
+    <div id="tactics-prompt"></div>
+    <div id="tactics-options"></div>
+  </div>
   <div id="official-match-result"></div>
   <button id="next-week-button">次の週へ</button>
   <div id="practice-game-result"></div>
   <div id="season-event-result"></div>
+</div>
+
+<div class="card" id="news-card" style="display:none;">
+  <h2 style="font-size:16px; margin-top:0;">📰 部内ニュース</h2>
+  <div id="news-list"></div>
 </div>
 
 <div class="card" id="scout-card" style="display:none;">
@@ -426,7 +493,7 @@
   ];
   const tournamentState = {};
   tournaments.forEach(t => {
-    tournamentState[t.id] = { currentRound: 0, eliminated: false, champion: false, resetYear: 0 };
+    tournamentState[t.id] = { currentRound: 0, eliminated: false, champion: false, resetYear: 0, previewOpponent: null };
   });
 
   let schoolYear = 1;
@@ -437,6 +504,8 @@
   let scoutIdCounter = 0;
   let playerIdCounter = 0;
   let scoutBonusTierBoost = 0; // 「有望な転校生」イベントで次のスカウトの質が上がる
+  // 公式戦の采配フェーズ中の一時的な状態(攻撃采配→守備采配→結果、の2段階)
+  let pendingMatch = null;
 
   // スタメン: pitcherIdが先発投手。defenseは「誰がどこを守るか」(捕手1・内野手4・外野手3の固定8枠)、
   // battingOrderは「誰が何番を打つか」で、defenseで選んだ選手を自由な順番に並べるだけ(守備位置とは無関係)
@@ -540,6 +609,40 @@
     return PLAYER_RANKS.find(rank => sum <= rank.max).label;
   }
 
+  // ③ 成長がニュースの見出しとして伝わるようにする
+  const newsFeed = [];
+
+  function addNewsEntry(text) {
+    const monthIndex = Math.floor(weekIndex / WEEKS_PER_MONTH);
+    newsFeed.unshift({ dateLabel: `${schoolYear}年目${monthNames[monthIndex]}`, text });
+    if (newsFeed.length > 15) newsFeed.length = 15;
+  }
+
+  const RANK_MILESTONE_MESSAGES = {
+    C: p => `${p.name}が着実に実力をつけてきた。`,
+    B: p => `${p.name}がチームの主力に成長した!`,
+    A: p => `${p.name}が県内屈指の選手へと成長した!`,
+    S: p => (p.position === "pitcher"
+      ? `${p.name}がエースの風格を漂わせ始めた!`
+      : `${p.name}が主砲としての貫禄を見せている!`),
+  };
+  const RANK_ORDER = PLAYER_RANKS.map(r => r.label);
+
+  // 選手のランクが上がったら、ニュース見出しとして知らせる
+  function checkPlayerRankMilestones() {
+    players.forEach(p => {
+      const rank = playerRankLabel(p);
+      if (rank !== p.lastAnnouncedRank) {
+        const oldIndex = RANK_ORDER.indexOf(p.lastAnnouncedRank);
+        const newIndex = RANK_ORDER.indexOf(rank);
+        if (newIndex > oldIndex && RANK_MILESTONE_MESSAGES[rank]) {
+          addNewsEntry(`📰 ${RANK_MILESTONE_MESSAGES[rank](p)}(ランク${rank})`);
+        }
+        p.lastAnnouncedRank = rank;
+      }
+    });
+  }
+
   // 選手ごとの個性。才能とは別に、練習の伸び方・怪我のしやすさ・大事な試合での粘りなどに影響する
   const PERSONALITY_TRAITS = [
     { id: "late-bloomer", label: "大器晩成", desc: "1年生のうちは伸びが遅いが、2年生以降に伸びが良くなる" },
@@ -630,7 +733,7 @@
   function createPlayer(name, position, enrollYear) {
     const { stats, talentLabel } = rollNewPlayerStats(position);
     playerIdCounter++;
-    return {
+    const player = {
       id: playerIdCounter,
       personalityId: rollPersonalityId(),
       name,
@@ -643,6 +746,8 @@
       fatigue: 0,
       injuryWeeksLeft: 0,
     };
+    player.lastAnnouncedRank = playerRankLabel(player); // これ以降のランクアップだけをニュースにする
+    return player;
   }
 
   function randomRecruitName(excludeNames) {
@@ -757,7 +862,7 @@
     if (index === -1) return;
     const candidate = scoutCandidates[index];
     playerIdCounter++;
-    players.push({
+    const newPlayer = {
       id: playerIdCounter,
       personalityId: candidate.personalityId,
       name: candidate.name,
@@ -769,7 +874,9 @@
       selectedPracticeStatKey: practiceMenus[candidate.position][0].statKey,
       fatigue: 0,
       injuryWeeksLeft: 0,
-    });
+    };
+    newPlayer.lastAnnouncedRank = playerRankLabel(newPlayer);
+    players.push(newPlayer);
     scoutCandidates.splice(index, 1);
     renderScoutCandidates();
     renderPlayerList();
@@ -805,6 +912,10 @@
   const statusLine = document.getElementById("status-line");
   const officialMatchButton = document.getElementById("official-match-button");
   const officialMatchResult = document.getElementById("official-match-result");
+  const matchPreviewArea = document.getElementById("match-preview");
+  const tacticsCard = document.getElementById("tactics-card");
+  const tacticsPrompt = document.getElementById("tactics-prompt");
+  const tacticsOptions = document.getElementById("tactics-options");
   const nextWeekButton = document.getElementById("next-week-button");
   const practiceGameResult = document.getElementById("practice-game-result");
   const seasonEventResult = document.getElementById("season-event-result");
@@ -819,6 +930,15 @@
   const autoLineupButton = document.getElementById("auto-lineup-button");
   const rivalsListArea = document.getElementById("rivals-list");
   const rivalsEmptyNote = document.getElementById("rivals-empty-note");
+  const newsCard = document.getElementById("news-card");
+  const newsListArea = document.getElementById("news-list");
+
+  function renderNewsFeed() {
+    newsCard.style.display = newsFeed.length > 0 ? "block" : "none";
+    newsListArea.innerHTML = newsFeed
+      .map(entry => `<div class="news-row"><span class="news-date">${entry.dateLabel}</span>${entry.text}</div>`)
+      .join("");
+  }
 
   function renderRivalRecords() {
     const entries = Object.entries(rivalRecords).filter(([, r]) => r.wins + r.losses > 0);
@@ -1020,6 +1140,7 @@
       lineup,
       bulkSelectionByPosition,
       rivalRecords,
+      newsFeed,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(state));
@@ -1051,6 +1172,8 @@
       lineup = (state.lineup && Array.isArray(state.lineup.defense)) ? state.lineup : defaultLineup();
       Object.assign(bulkSelectionByPosition, state.bulkSelectionByPosition || {});
       Object.assign(rivalRecords, state.rivalRecords || {});
+      newsFeed.length = 0;
+      newsFeed.push(...(state.newsFeed || []));
       return true;
     } catch (e) {
       return false;
@@ -1070,8 +1193,19 @@
       state.currentRound = 0;
       state.eliminated = false;
       state.champion = false;
+      state.previewOpponent = null;
       state.resetYear = schoolYear;
     }
+  }
+
+  // 大会の各ラウンドの意気込み・煽り文句
+  function getStakesText(tournament, roundNumber) {
+    if (roundNumber === tournament.roundsToWin) {
+      return tournament.id === "summer" ? "勝てば甲子園出場!" : `勝てば${tournament.name}優勝!`;
+    }
+    if (roundNumber === tournament.roundsToWin - 1) return "あと1勝で決勝進出!";
+    if (roundNumber === 1) return "まずはここを突破したい一戦。";
+    return "着実に勝ち進みたいところ。";
   }
 
   function findWindowTournament() {
@@ -1188,7 +1322,95 @@
     return 1 + count * 0.05;
   }
 
-  function runMatch(roundInfo) {
+  // 攻撃采配: バッターにどう打たせるか。チームの実効能力を上下させる(打力平均が高いほど積極策が活きる)
+  const BATTING_APPROACHES = [
+    { id: "power", label: "長打狙い", desc: "大きな当たりを狙う。ハマれば大量点、外れると無得点のことも" },
+    { id: "swing", label: "強振", desc: "積極的に振っていく。長打狙いよりはやや手堅い" },
+    { id: "meet", label: "ミート", desc: "当てることを優先する。安定した選択" },
+    { id: "bunt", label: "バント", desc: "手堅く走者を進める。確実だが大量点は望みにくい" },
+    { id: "wait", label: "見送り", desc: "じっくり球を見極め、相手の乱れを待つ" },
+  ];
+
+  function resolveBattingApproach(approachId, battingPower) {
+    const scale = Math.max(0.5, Math.min(1.5, battingPower / 60));
+    let bonusPct = 0;
+    let flavor = "";
+    switch (approachId) {
+      case "power":
+        if (Math.random() < 0.5 * scale) { bonusPct = 0.20 + Math.random() * 0.15; flavor = "積極的な長打狙いがハマった!"; }
+        else { bonusPct = -0.05; flavor = "大振りが響かず精彩を欠いた。"; }
+        break;
+      case "swing":
+        if (Math.random() < 0.55 * scale) { bonusPct = 0.12 + Math.random() * 0.10; flavor = "強振の姿勢が実を結んだ。"; }
+        else { bonusPct = 0; flavor = "強振したが仕留めきれなかった。"; }
+        break;
+      case "meet":
+        bonusPct = 0.05 + Math.random() * 0.05;
+        flavor = "手堅いミートで安定した攻撃を見せた。";
+        break;
+      case "bunt":
+        bonusPct = 0.03 + Math.random() * 0.04;
+        flavor = "確実な進塁で流れを作った。";
+        break;
+      case "wait":
+        if (Math.random() < 0.4) { bonusPct = 0.08 + Math.random() * 0.07; flavor = "じっくり見極めて相手の隙を突いた。"; }
+        else { bonusPct = -0.02; flavor = "好機を活かせず終わった。"; }
+        break;
+    }
+    return { bonusPct, flavor };
+  }
+
+  // 守備采配: 投手にどう投げさせるか。相手の実効能力を上下させる(投手の該当能力が高いほど狙いが活きる)
+  const PITCHING_APPROACHES = [
+    { id: "fastball", label: "直球多用", desc: "球速で押し込む。ハマれば三振の山だが、甘く入ると痛打も" },
+    { id: "breaking", label: "変化球多用", desc: "変化球で打者を惑わす。コントロールが鍵" },
+    { id: "strikeout", label: "三振狙い", desc: "一つ一つ丁寧に空振りを狙う" },
+    { id: "contact", label: "打たせて取る", desc: "スタミナを温存し、守備に頼る安定志向" },
+  ];
+
+  function resolvePitchingApproach(approachId, pitcher) {
+    const velocity = pitcher ? (pitcher.stats.velocity || 40) : 40;
+    const breaking = pitcher ? (pitcher.stats.breaking || 40) : 40;
+    const control = pitcher ? (pitcher.stats.control || 40) : 40;
+    let penaltyPct = 0;
+    let flavor = "";
+    switch (approachId) {
+      case "fastball": {
+        const scale = Math.max(0.5, Math.min(1.5, velocity / 60));
+        if (Math.random() < 0.5 * scale) { penaltyPct = 0.20 + Math.random() * 0.15; flavor = "力強い直球で相手打線を封じた。"; }
+        else { penaltyPct = -0.05; flavor = "直球を狙い打たれてしまった。"; }
+        break;
+      }
+      case "breaking": {
+        const scale = Math.max(0.5, Math.min(1.5, breaking / 60));
+        penaltyPct = Math.random() < 0.55 * scale ? 0.15 + Math.random() * 0.10 : 0;
+        flavor = penaltyPct > 0 ? "切れ味鋭い変化球で打ち取った。" : "変化球を見極められてしまった。";
+        break;
+      }
+      case "strikeout": {
+        const scale = Math.max(0.5, Math.min(1.5, control / 60));
+        if (Math.random() < 0.45 * scale) { penaltyPct = 0.20 + Math.random() * 0.15; flavor = "三振の山を築き、危機を脱した。"; }
+        else { penaltyPct = -0.05; flavor = "力んだ末に制球を乱してしまった。"; }
+        break;
+      }
+      case "contact":
+        penaltyPct = 0.05 + Math.random() * 0.05;
+        flavor = "堅実な投球と守備で流れを渡さなかった。";
+        break;
+    }
+    return { penaltyPct, flavor };
+  }
+
+  function averageBattingPower() {
+    const ids = lineup.battingOrder.filter(Boolean);
+    if (ids.length === 0) return 40;
+    const vals = ids.map(id => players.find(p => p.id === id)).filter(Boolean).map(p => p.stats.batting || 0);
+    if (vals.length === 0) return 40;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+
+  // 試合の基礎となる自チーム・相手の力を計算する(采配による補正はまだ加えていない状態)
+  function computeBaseMatchNumbers(roundInfo, presetOpponent) {
     const teamPower = totalLineupPower() * mentalStrengthBonus(roundInfo);
 
     // 大会の試合は、序盤は格下寄り・勝ち進むほど格上と当たりやすくなるように相手の強さの範囲を変える
@@ -1201,17 +1423,36 @@
       high = 0.9 + progress * 0.7;  // 0.9 → 1.6
     }
     const opponentPower = Math.round(teamPower * (low + Math.random() * (high - low)));
+    const opponentSchool = presetOpponent || pickRivalSchool();
+    return { teamPower, opponentPower, opponentSchool };
+  }
 
-    // 自チームが強いほど勝ちやすいが、多少の運の要素もある
-    const winProbability = teamPower / (teamPower + opponentPower);
+  // 采配(攻撃・守備)による補正を加えたうえで、最終的な勝敗を決める
+  function finalizeMatch(base, battingBonusPct, pitchingPenaltyPct) {
+    const adjustedTeamPower = base.teamPower * (1 + battingBonusPct);
+    const adjustedOpponentPower = Math.max(1, base.opponentPower * (1 - pitchingPenaltyPct));
+    const winProbability = adjustedTeamPower / (adjustedTeamPower + adjustedOpponentPower);
     const isWin = Math.random() < winProbability;
     const starters = getStartingPlayers();
     const count = starters.length || 1;
-    const teamTier = powerTierLabel(teamPower / count);
-    const opponentTier = powerTierLabel(opponentPower / count);
-    const opponentSchool = pickRivalSchool();
-    recordRivalResult(opponentSchool.name, isWin);
-    return { teamPower, opponentPower, isWin, teamTier, opponentTier, opponentSchool, winProbability };
+    const teamTier = powerTierLabel(adjustedTeamPower / count);
+    const opponentTier = powerTierLabel(adjustedOpponentPower / count);
+    recordRivalResult(base.opponentSchool.name, isWin);
+    return {
+      teamPower: adjustedTeamPower,
+      opponentPower: adjustedOpponentPower,
+      isWin,
+      teamTier,
+      opponentTier,
+      opponentSchool: base.opponentSchool,
+      winProbability,
+    };
+  }
+
+  // 練習試合など、采配なしでそのまま結果を出したいときに使う
+  function runMatch(roundInfo) {
+    const base = computeBaseMatchNumbers(roundInfo);
+    return finalizeMatch(base, 0, 0);
   }
 
   const INNING_COUNT = 9;
@@ -1270,15 +1511,17 @@
     return lines;
   }
 
-  function buildMatchReportHtml(label, result) {
+  function buildMatchReportHtml(label, result, tacticsFlavors) {
     const box = generateBoxScore(result.isWin, result.winProbability);
     const school = result.opponentSchool;
-    const commentary = buildCommentary(box, result.isWin, school.name);
+    const commentary = [...(tacticsFlavors || []), ...buildCommentary(box, result.isWin, school.name)];
     const inningHeaders = box.teamRuns.map((_, i) => `<th>${i + 1}</th>`).join("") + "<th>計</th>";
     const teamRow = box.teamRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.teamTotal}</strong></td>`;
     const oppRow = box.oppRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.oppTotal}</strong></td>`;
     const outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北…";
     const record = rivalRecords[school.name] || { wins: 0, losses: 0 };
+    const mvp = pickMatchMvp(result.isWin);
+    const mvpLine = mvp ? `<div class="mvp-line">🌟 この試合のMVP: ${mvp.name}(${positionLabels[mvp.position]})</div>` : "";
 
     return `
       <div class="match-outcome ${result.isWin ? "win" : "lose"}">${label}: ${outcomeText}</div>
@@ -1291,8 +1534,17 @@
         </table>
       </div>
       <div class="commentary-lines">${commentary.map(line => `<div>${line}</div>`).join("")}</div>
+      ${mvpLine}
       <div class="match-power-line">自チーム: ${result.teamTier} / ${school.name}: ${result.opponentTier}(通算 ${record.wins}勝${record.losses}敗)</div>
     `;
+  }
+
+  // 試合に勝った時、出場選手の中で一番能力の高い選手をMVPとして讃える(③ 育成の手応え強化)
+  function pickMatchMvp(isWin) {
+    if (!isWin) return null;
+    const starters = getStartingPlayers();
+    if (starters.length === 0) return null;
+    return [...starters].sort((a, b) => playerPowerSum(b) - playerPowerSum(a))[0];
   }
 
   // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる(その分、疲労も少し溜まる)
@@ -1348,19 +1600,30 @@
       statusLine.textContent = "オフシーズンです。練習に励みましょう。";
     }
 
-    if (windowT && isMatchAvailable(windowT)) {
+    if (windowT && isMatchAvailable(windowT) && !pendingMatch) {
       const state = tournamentState[windowT.id];
+      const roundNumber = state.currentRound + 1;
       officialMatchButton.style.display = "block";
-      officialMatchButton.textContent = `公式戦: ${windowT.name} ${roundLabel(windowT.roundsToWin, state.currentRound + 1)}を行う`;
+      officialMatchButton.textContent = `公式戦: ${windowT.name} ${roundLabel(windowT.roundsToWin, roundNumber)}を行う`;
+
+      if (!state.previewOpponent) state.previewOpponent = pickRivalSchool();
+      const stakesText = getStakesText(windowT, roundNumber);
+      matchPreviewArea.style.display = "block";
+      matchPreviewArea.innerHTML = `
+        次の対戦校: <strong>${state.previewOpponent.name}</strong>(${state.previewOpponent.trait})
+        <div class="preview-stakes">${stakesText}</div>
+      `;
     } else {
       officialMatchButton.style.display = "none";
+      if (!pendingMatch) matchPreviewArea.style.display = "none";
     }
 
     updateNextWeekButtonState();
   }
 
   function canAdvanceWeek() {
-    // 今週の公式戦がまだ残っていれば次の週へ進めない(練習は必須にしない)
+    // 采配中、または今週の公式戦がまだ残っていれば次の週へ進めない(練習は必須にしない)
+    if (pendingMatch) return false;
     return !isMatchPendingThisWeek();
   }
 
@@ -1368,6 +1631,7 @@
     nextWeekButton.disabled = !canAdvanceWeek();
   }
 
+  // 公式戦は「攻撃采配→守備采配→結果」の2段階で進む。ここで試合を始め、まず攻撃采配を尋ねる
   officialMatchButton.addEventListener("click", () => {
     if (!lineup.pitcherId) {
       alert("スタメンに投手がいません。「スタメン・守備・打順」で先発投手を選んでください。");
@@ -1379,16 +1643,67 @@
     const state = tournamentState[windowT.id];
     const roundNumber = state.currentRound + 1;
     const label = roundLabel(windowT.roundsToWin, roundNumber);
-    const result = runMatch({ roundNumber, roundsToWin: windowT.roundsToWin });
+    const base = computeBaseMatchNumbers({ roundNumber, roundsToWin: windowT.roundsToWin }, state.previewOpponent);
+
+    pendingMatch = {
+      windowT, state, roundNumber, label,
+      base, phase: "batting",
+      battingBonusPct: 0, battingFlavor: "",
+    };
+
+    officialMatchButton.style.display = "none";
+    matchPreviewArea.style.display = "none";
+    officialMatchResult.innerHTML = "";
+    renderTacticsUI();
+    updateNextWeekButtonState();
+  });
+
+  function renderTacticsUI() {
+    tacticsCard.style.display = "block";
+    if (pendingMatch.phase === "batting") {
+      tacticsPrompt.textContent = "ここぞの攻撃の場面。どう攻める?";
+      tacticsOptions.innerHTML = BATTING_APPROACHES
+        .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
+        .join("");
+    } else {
+      tacticsPrompt.textContent = "相手の反撃を防ぎたい場面。どう投げさせる?";
+      tacticsOptions.innerHTML = PITCHING_APPROACHES
+        .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
+        .join("");
+    }
+  }
+
+  tacticsOptions.addEventListener("click", (event) => {
+    const approachId = event.target.dataset.approach;
+    if (!approachId || !pendingMatch) return;
+
+    if (pendingMatch.phase === "batting") {
+      const { bonusPct, flavor } = resolveBattingApproach(approachId, averageBattingPower());
+      pendingMatch.battingBonusPct = bonusPct;
+      pendingMatch.battingFlavor = `【攻撃采配:${BATTING_APPROACHES.find(a => a.id === approachId).label}】${flavor}`;
+      pendingMatch.phase = "pitching";
+      renderTacticsUI();
+      return;
+    }
+
+    // 守備采配が決まったら試合を確定する
+    const { windowT, state, roundNumber, label, base, battingBonusPct, battingFlavor } = pendingMatch;
+    const pitcher = players.find(p => p.id === lineup.pitcherId);
+    const { penaltyPct, flavor: pitchingFlavor } = resolvePitchingApproach(approachId, pitcher);
+
+    const result = finalizeMatch(base, battingBonusPct, penaltyPct);
 
     if (result.isWin) {
       state.currentRound++;
       if (state.currentRound >= windowT.roundsToWin) {
         state.champion = true;
+        const cheerText = windowT.id === "summer" ? "夏の甲子園出場を決めた!" : `${windowT.name}を制した!`;
+        addNewsEntry(`🏆 部史に残る快挙!${cheerText}`);
       }
     } else {
       state.eliminated = true;
     }
+    state.previewOpponent = null;
     officialMatchPlayedThisWeek = true;
     grantMatchExperience();
 
@@ -1396,7 +1711,11 @@
     if (result.isWin && state.champion) {
       reportLabel += `(優勝!)`;
     }
-    officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result);
+    const pitchingFlavorLine = `【守備采配:${PITCHING_APPROACHES.find(a => a.id === approachId).label}】${pitchingFlavor}`;
+    officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result, [battingFlavor, pitchingFlavorLine]);
+
+    pendingMatch = null;
+    tacticsCard.style.display = "none";
 
     renderCalendar();
     renderPlayerList();
@@ -1459,9 +1778,11 @@
 
   function renderPlayerList() {
     validateLineup();
+    checkPlayerRankMilestones();
     renderLineupControls();
     renderBulkPracticeControls();
     renderRivalRecords();
+    renderNewsFeed();
     playerListArea.innerHTML = "";
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
     teamPowerLine.textContent = players.length > 0 ? `チームの実力: ${currentTeamTierLabel()}` : "";
