@@ -146,6 +146,23 @@
     border-radius: 10px;
     margin-left: 6px;
   }
+  .injury-badge {
+    display: inline-block;
+    font-size: 12px;
+    background: #b3261e;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+  }
+  .fatigue-line {
+    font-size: 12px;
+    margin-top: 4px;
+    font-weight: bold;
+  }
+  .fatigue-line.fatigue-ok { color: #1a5d2b; }
+  .fatigue-line.fatigue-warn { color: #e0a800; }
+  .fatigue-line.fatigue-danger { color: #b3261e; }
   .rank-badge {
     display: inline-block;
     font-size: 12px;
@@ -334,31 +351,36 @@
     outfielder: fielderStatDefs,
   };
 
-  // 練習メニュー: 能力値ごとに専用の練習を用意する
+  // 練習メニュー: 能力値ごとに専用の練習を用意する。「休養」は疲労を回復する特別なメニュー
+  const REST_MENU = { statKey: "rest", label: "休養" };
   const practiceMenus = {
     pitcher: [
       { statKey: "velocity", label: "投球練習" },
       { statKey: "breaking", label: "変化球練習" },
       { statKey: "control", label: "コントロール練習" },
       { statKey: "stamina", label: "走り込み" },
+      REST_MENU,
     ],
     catcher: [
       { statKey: "batting", label: "バッティング練習" },
       { statKey: "running", label: "走り込み" },
       { statKey: "fielding", label: "守備練習" },
       { statKey: "arm", label: "肩力トレーニング" },
+      REST_MENU,
     ],
     infielder: [
       { statKey: "batting", label: "バッティング練習" },
       { statKey: "running", label: "走り込み" },
       { statKey: "fielding", label: "守備練習" },
       { statKey: "arm", label: "肩力トレーニング" },
+      REST_MENU,
     ],
     outfielder: [
       { statKey: "batting", label: "バッティング練習" },
       { statKey: "running", label: "走り込み" },
       { statKey: "fielding", label: "守備練習" },
       { statKey: "arm", label: "肩力トレーニング" },
+      REST_MENU,
     ],
   };
 
@@ -483,6 +505,8 @@
       enrollYear: enrollYear === undefined ? schoolYear : enrollYear,
       practicedThisWeek: false,
       selectedPracticeStatKey: practiceMenus[position][0].statKey,
+      fatigue: 0,
+      injuryWeeksLeft: 0,
     };
   }
 
@@ -586,6 +610,8 @@
       enrollYear: schoolYear,
       practicedThisWeek: false,
       selectedPracticeStatKey: practiceMenus[candidate.position][0].statKey,
+      fatigue: 0,
+      injuryWeeksLeft: 0,
     });
     scoutCandidates.splice(index, 1);
     renderScoutCandidates();
@@ -653,13 +679,13 @@
   }
 
   function renderLineupControls() {
-    const pitchers = players.filter(p => p.position === "pitcher");
+    const pitchers = players.filter(p => p.position === "pitcher" && isFitToPlay(p));
     lineupPitcherSelect.innerHTML = pitchers.length > 0
       ? pitchers.map(p => `<option value="${p.id}" ${p.id === lineup.pitcherId ? "selected" : ""}>${p.name}(${playerGradeLabel(p)}/${playerRankLabel(p)})</option>`).join("")
       : `<option value="">投手がいません</option>`;
 
     lineupOrderArea.innerHTML = "";
-    const fielders = players.filter(p => p.position !== "pitcher");
+    const fielders = players.filter(p => p.position !== "pitcher" && isFitToPlay(p));
     for (let slot = 0; slot < 8; slot++) {
       const usedElsewhere = lineup.order.filter((id, idx) => idx !== slot);
       const selectable = fielders.filter(p => !usedElsewhere.includes(p.id));
@@ -837,19 +863,28 @@
   }
 
   // 卒業などでいなくなった選手をスタメンから外し、空いた枠には残りで一番能力が高い選手を自動で補う
+  function isFitToPlay(player) {
+    return !player.injuryWeeksLeft || player.injuryWeeksLeft <= 0;
+  }
+
+  // 故障中の選手はスタメンに入れない(自動補充・既存の選出とも対象外にする)
   function autoFillLineup() {
-    const pitchers = players.filter(p => p.position === "pitcher");
+    const pitchers = players.filter(p => p.position === "pitcher" && isFitToPlay(p));
     if (!lineup.pitcherId || !pitchers.some(p => p.id === lineup.pitcherId)) {
       const best = [...pitchers].sort((a, b) => playerPowerSum(b) - playerPowerSum(a))[0];
       lineup.pitcherId = best ? best.id : null;
     }
 
-    lineup.order = lineup.order.map(id => (id && players.some(p => p.id === id)) ? id : null);
+    lineup.order = lineup.order.map(id => {
+      if (!id) return null;
+      const p = players.find(pl => pl.id === id);
+      return (p && isFitToPlay(p)) ? id : null;
+    });
     while (lineup.order.length < 8) lineup.order.push(null);
 
     const usedIds = new Set([lineup.pitcherId, ...lineup.order].filter(Boolean));
     const availableSorted = players
-      .filter(p => p.position !== "pitcher" && !usedIds.has(p.id))
+      .filter(p => p.position !== "pitcher" && isFitToPlay(p) && !usedIds.has(p.id))
       .sort((a, b) => playerPowerSum(b) - playerPowerSum(a));
 
     for (let i = 0; i < 8; i++) {
@@ -957,13 +992,14 @@
     `;
   }
 
-  // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる
+  // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる(その分、疲労も少し溜まる)
   function grantMatchExperience() {
     getStartingPlayers().forEach(player => {
       const defs = statDefs[player.position];
       const def = defs[Math.floor(Math.random() * defs.length)];
       const gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
       player.stats[def.key] = Math.min(STAT_CAP, player.stats[def.key] + gain);
+      player.fatigue = Math.min(100, (player.fatigue || 0) + 5 + Math.floor(Math.random() * 6)); // 5〜10
     });
   }
 
@@ -1082,7 +1118,13 @@
 
     officialMatchPlayedThisWeek = false;
     officialMatchResult.textContent = "";
-    players.forEach(p => { p.practicedThisWeek = false; });
+    players.forEach(p => {
+      p.practicedThisWeek = false;
+      if (p.injuryWeeksLeft > 0) {
+        p.injuryWeeksLeft--;
+        p.fatigue = Math.max(0, (p.fatigue || 0) - 15); // 療養中は疲労も回復していく
+      }
+    });
 
     autoFillLineup();
 
@@ -1127,14 +1169,25 @@
         ? `<span class="talent-badge">★ ${player.talentLabel}の才能</span>`
         : "";
 
+      const injured = player.injuryWeeksLeft > 0;
+      const injuryBadge = injured
+        ? `<span class="injury-badge">🤕 故障中(あと${player.injuryWeeksLeft}週)</span>`
+        : "";
+
+      const fatigue = player.fatigue || 0;
+      let fatigueClass = "fatigue-ok";
+      if (fatigue >= INJURY_RISK_FATIGUE) fatigueClass = "fatigue-danger";
+      else if (fatigue >= 40) fatigueClass = "fatigue-warn";
+
       const menuOptions = practiceMenus[player.position]
         .map(menu => `<option value="${menu.statKey}" ${menu.statKey === player.selectedPracticeStatKey ? "selected" : ""}>${menu.label}</option>`)
         .join("");
 
-      const disablePractice = matchPending || player.practicedThisWeek;
+      const disablePractice = matchPending || player.practicedThisWeek || injured;
       const buttonDisabled = disablePractice ? "disabled" : "";
       let buttonLabel = "この内容で練習する";
-      if (matchPending) buttonLabel = "今週は公式戦のため練習できません";
+      if (injured) buttonLabel = "故障中は練習できません";
+      else if (matchPending) buttonLabel = "今週は公式戦のため練習できません";
       else if (player.practicedThisWeek) buttonLabel = "今週は練習済み";
 
       div.innerHTML = `
@@ -1143,7 +1196,9 @@
         <span class="player-grade">${gradeLabel}</span>
         <span class="rank-badge">${playerRankLabel(player)}</span>
         ${talentBadge}
+        ${injuryBadge}
         <div class="stat-line">${statLine}</div>
+        <div class="fatigue-line ${fatigueClass}">疲労: ${fatigue}</div>
         <div class="practice-row">
           <select class="practice-select" data-index="${index}" ${buttonDisabled}>${menuOptions}</select>
           <button class="practice-execute-button" data-index="${index}" ${buttonDisabled}>${buttonLabel}</button>
@@ -1156,14 +1211,34 @@
     saveGame();
   }
 
+  // 疲労がこの値を超えると、練習のたびに怪我のリスクが発生する
+  const INJURY_RISK_FATIGUE = 70;
+
   function applyPracticeGain(player, statKey) {
+    if (player.injuryWeeksLeft > 0) return; // 故障中は練習できない
+
+    if (statKey === "rest") {
+      // 休養: 能力は伸びないが疲労が大きく回復する
+      player.fatigue = Math.max(0, (player.fatigue || 0) - (25 + Math.floor(Math.random() * 11)));
+      return;
+    }
+
     const gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
     player.stats[statKey] = Math.min(STAT_CAP, player.stats[statKey] + gain);
+
+    player.fatigue = Math.min(100, (player.fatigue || 0) + 15 + Math.floor(Math.random() * 11)); // 15〜25 疲労が溜まる
+    if (player.fatigue >= INJURY_RISK_FATIGUE) {
+      const injuryChance = 0.05 + (player.fatigue - INJURY_RISK_FATIGUE) * 0.01; // 疲労70で5%、100で35%
+      if (Math.random() < injuryChance) {
+        player.injuryWeeksLeft = 1 + Math.floor(Math.random() * 3); // 1〜3週間離脱
+        player.fatigue = Math.max(0, player.fatigue - 30);
+      }
+    }
   }
 
   function practicePlayer(index, statKey) {
     const player = players[index];
-    if (player.practicedThisWeek || isMatchPendingThisWeek()) return;
+    if (player.practicedThisWeek || isMatchPendingThisWeek() || player.injuryWeeksLeft > 0) return;
     player.selectedPracticeStatKey = statKey;
     applyPracticeGain(player, statKey);
     player.practicedThisWeek = true;
