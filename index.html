@@ -209,7 +209,6 @@
 
     <button id="add-button">この内容で入部させる</button>
   </div>
-  <div id="full-note" class="empty-note" style="display:none;"></div>
 </div>
 
 <div class="card">
@@ -222,8 +221,8 @@
 </div>
 
 <script>
-  const MAX_PLAYERS = 9;
   const RECRUITS_PER_YEAR = 3;
+  const STAT_CAP = 150;
   const players = [];
 
   const positionLabels = {
@@ -369,11 +368,9 @@
       if (grade > 3) players.splice(i, 1);
     }
 
-    // 卒業の有無にかかわらず、毎年春に新入部員が入ってくる(定員の空きがある分だけ)
+    // 卒業の有無にかかわらず、毎年春に新入部員が入ってくる(人数の上限はなし)
     const recruitedNames = [];
-    const openSlots = MAX_PLAYERS - players.length;
-    const recruitCount = Math.min(RECRUITS_PER_YEAR, openSlots);
-    for (let i = 0; i < recruitCount; i++) {
+    for (let i = 0; i < RECRUITS_PER_YEAR; i++) {
       const name = sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
       const position = allPositions[Math.floor(Math.random() * allPositions.length)];
       players.push(createPlayer(name, position));
@@ -395,7 +392,7 @@
     if (Math.random() < 0.3) {
       const def = defs[Math.floor(Math.random() * defs.length)];
       const bonus = 15 + Math.floor(Math.random() * 21); // +15〜35
-      stats[def.key] = Math.min(100, stats[def.key] + bonus);
+      stats[def.key] = Math.min(STAT_CAP, stats[def.key] + bonus);
       talentLabel = def.label;
     }
 
@@ -405,8 +402,6 @@
   const nameInput = document.getElementById("name-input");
   const positionInput = document.getElementById("position-input");
   const addButton = document.getElementById("add-button");
-  const formArea = document.getElementById("form-area");
-  const fullNote = document.getElementById("full-note");
   const playerListArea = document.getElementById("player-list");
   const emptyListNote = document.getElementById("empty-list-note");
   const calendarLine = document.getElementById("calendar-line");
@@ -478,7 +473,7 @@
       const defs = statDefs[player.position];
       const def = defs[Math.floor(Math.random() * defs.length)];
       const gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
-      player.stats[def.key] = Math.min(100, player.stats[def.key] + gain);
+      player.stats[def.key] = Math.min(STAT_CAP, player.stats[def.key] + gain);
     });
   }
 
@@ -600,7 +595,6 @@
 
     renderCalendar();
     renderPlayerList();
-    updateFormAvailability();
   });
 
   function renderPlayerList() {
@@ -658,7 +652,7 @@
 
   function applyPracticeGain(player, statKey) {
     const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
-    player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
+    player.stats[statKey] = Math.min(STAT_CAP, player.stats[statKey] + gain);
   }
 
   function practicePlayer(index, statKey) {
@@ -668,13 +662,6 @@
     applyPracticeGain(player, statKey);
     player.practicedThisWeek = true;
     renderPlayerList();
-  }
-
-  function updateFormAvailability() {
-    const full = players.length >= MAX_PLAYERS;
-    formArea.style.display = full ? "none" : "block";
-    fullNote.style.display = full ? "block" : "none";
-    fullNote.textContent = `選手は${MAX_PLAYERS}人まで登録できます。すでに${MAX_PLAYERS}人登録済みです。`;
   }
 
   addButton.addEventListener("click", () => {
@@ -689,7 +676,6 @@
 
     nameInput.value = "";
     renderPlayerList();
-    updateFormAvailability();
   });
 
   playerListArea.addEventListener("click", (event) => {
@@ -742,7 +728,6 @@
 
   renderCalendar();
   renderPlayerList();
-  updateFormAvailability();
 </script>
 
 </body>
