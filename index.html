@@ -30,7 +30,7 @@
     font-size: 14px;
     font-weight: bold;
   }
-  input[type="text"], select, input[type="number"] {
+  input[type="text"], select {
     width: 100%;
     padding: 6px;
     margin-top: 4px;
@@ -52,6 +52,19 @@
     background: #aaa;
     cursor: not-allowed;
   }
+  .calendar-line {
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
+    color: #1a5d2b;
+  }
+  .calendar-event {
+    text-align: center;
+    font-size: 13px;
+    color: #555;
+    margin-top: 6px;
+    min-height: 18px;
+  }
   .player {
     border-left: 4px solid #1a5d2b;
     padding: 8px 12px;
@@ -63,10 +76,22 @@
     font-weight: bold;
     font-size: 16px;
   }
-  .player-pos {
+  .player-pos, .player-grade {
     display: inline-block;
     font-size: 12px;
     background: #1a5d2b;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+  }
+  .player-grade {
+    background: #666;
+  }
+  .talent-badge {
+    display: inline-block;
+    font-size: 12px;
+    background: #e0a800;
     color: white;
     padding: 2px 8px;
     border-radius: 10px;
@@ -77,11 +102,18 @@
     margin-top: 4px;
     color: #444;
   }
-  .practice-button {
+  .practice-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     margin-top: 8px;
+  }
+  .practice-button {
+    margin-top: 0;
     width: auto;
-    padding: 6px 12px;
-    font-size: 13px;
+    flex: 1 1 auto;
+    padding: 6px 10px;
+    font-size: 12px;
     background: #3d7dd6;
   }
   #match-result {
@@ -113,6 +145,12 @@
 <h1>⚾ 高校野球 選手育成シミュレーション</h1>
 
 <div class="card">
+  <div class="calendar-line" id="calendar-line"></div>
+  <div class="calendar-event" id="calendar-event"></div>
+  <button id="next-month-button">次の月へ</button>
+</div>
+
+<div class="card">
   <div id="form-area">
     <label>選手の名前</label>
     <input type="text" id="name-input" placeholder="例: 山田太郎">
@@ -120,12 +158,12 @@
     <label>ポジション</label>
     <select id="position-input">
       <option value="pitcher">投手</option>
-      <option value="fielder">野手</option>
+      <option value="catcher">捕手</option>
+      <option value="infielder">内野手</option>
+      <option value="outfielder">外野手</option>
     </select>
 
-    <div id="stat-inputs"></div>
-
-    <button id="add-button">この内容で選手を登録する</button>
+    <button id="add-button">この内容で入部させる</button>
   </div>
   <div id="full-note" class="empty-note" style="display:none;">
     選手は3人まで登録できます。すでに3人登録済みです。
@@ -148,44 +186,119 @@
   const MAX_PLAYERS = 3;
   const players = [];
 
+  const positionLabels = {
+    pitcher: "投手",
+    catcher: "捕手",
+    infielder: "内野手",
+    outfielder: "外野手",
+  };
+
+  // 投手は専用の能力値、それ以外の守備位置(捕手・内野手・外野手)は共通の能力値を使う
+  const fielderStatDefs = [
+    { key: "batting", label: "打力" },
+    { key: "running", label: "走力" },
+    { key: "fielding", label: "守備力" },
+    { key: "arm", label: "肩力" },
+  ];
+
   const statDefs = {
     pitcher: [
       { key: "velocity", label: "球速" },
+      { key: "breaking", label: "変化球" },
       { key: "control", label: "コントロール" },
       { key: "stamina", label: "スタミナ" },
     ],
-    fielder: [
-      { key: "batting", label: "打力" },
-      { key: "running", label: "走力" },
-      { key: "fielding", label: "守備力" },
+    catcher: fielderStatDefs,
+    infielder: fielderStatDefs,
+    outfielder: fielderStatDefs,
+  };
+
+  // 練習メニュー: 能力値ごとに専用の練習を用意する
+  const practiceMenus = {
+    pitcher: [
+      { statKey: "velocity", label: "投球練習" },
+      { statKey: "breaking", label: "変化球練習" },
+      { statKey: "control", label: "コントロール練習" },
+      { statKey: "stamina", label: "走り込み" },
+    ],
+    catcher: [
+      { statKey: "batting", label: "バッティング練習" },
+      { statKey: "running", label: "走り込み" },
+      { statKey: "fielding", label: "守備練習" },
+      { statKey: "arm", label: "肩力トレーニング" },
+    ],
+    infielder: [
+      { statKey: "batting", label: "バッティング練習" },
+      { statKey: "running", label: "走り込み" },
+      { statKey: "fielding", label: "守備練習" },
+      { statKey: "arm", label: "肩力トレーニング" },
+    ],
+    outfielder: [
+      { statKey: "batting", label: "バッティング練習" },
+      { statKey: "running", label: "走り込み" },
+      { statKey: "fielding", label: "守備練習" },
+      { statKey: "arm", label: "肩力トレーニング" },
     ],
   };
 
+  // 4月始まりの1年間のカレンダー。indexは学年内の月の並び順(0=4月, 11=3月)
+  const monthNames = ["4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月", "1月", "2月", "3月"];
+  const monthEvents = {
+    0: "入学式が行われました。新入生が入部してきます。",
+    3: "夏の大会に向けた地区予選が始まりました。",
+    4: "夏の大会が本番を迎えています。",
+    6: "新チームが始動。秋季大会が始まりました。",
+    11: "学年末です。来月から新学年になります。",
+  };
+
+  let schoolYear = 1;
+  let monthIndex = 0;
+
+  function rollNewPlayerStats(position) {
+    const defs = statDefs[position];
+    const stats = {};
+    // 入学したての1年生は基本的に能力が低め(15〜30)
+    defs.forEach(def => {
+      stats[def.key] = 15 + Math.floor(Math.random() * 16);
+    });
+
+    // 一定確率で「才能」が発動し、1つの能力だけ大きく伸びる
+    let talentLabel = null;
+    if (Math.random() < 0.3) {
+      const def = defs[Math.floor(Math.random() * defs.length)];
+      const bonus = 15 + Math.floor(Math.random() * 21); // +15〜35
+      stats[def.key] = Math.min(100, stats[def.key] + bonus);
+      talentLabel = def.label;
+    }
+
+    return { stats, talentLabel };
+  }
+
   const nameInput = document.getElementById("name-input");
   const positionInput = document.getElementById("position-input");
-  const statInputsArea = document.getElementById("stat-inputs");
   const addButton = document.getElementById("add-button");
   const formArea = document.getElementById("form-area");
   const fullNote = document.getElementById("full-note");
   const playerListArea = document.getElementById("player-list");
   const emptyListNote = document.getElementById("empty-list-note");
+  const calendarLine = document.getElementById("calendar-line");
+  const calendarEvent = document.getElementById("calendar-event");
+  const nextMonthButton = document.getElementById("next-month-button");
 
-  function renderStatInputs() {
-    const defs = statDefs[positionInput.value];
-    statInputsArea.innerHTML = "";
-    defs.forEach(def => {
-      const label = document.createElement("label");
-      label.textContent = `${def.label}(1〜100)`;
-      const input = document.createElement("input");
-      input.type = "number";
-      input.min = "1";
-      input.max = "100";
-      input.value = "50";
-      input.id = `stat-${def.key}`;
-      statInputsArea.appendChild(label);
-      statInputsArea.appendChild(input);
-    });
+  function renderCalendar() {
+    calendarLine.textContent = `${schoolYear}年目 ${monthNames[monthIndex]}`;
+    calendarEvent.textContent = monthEvents[monthIndex] || "";
   }
+
+  nextMonthButton.addEventListener("click", () => {
+    monthIndex++;
+    if (monthIndex >= monthNames.length) {
+      monthIndex = 0;
+      schoolYear++;
+    }
+    renderCalendar();
+    renderPlayerList();
+  });
 
   function renderPlayerList() {
     playerListArea.innerHTML = "";
@@ -195,28 +308,38 @@
       const div = document.createElement("div");
       div.className = "player";
 
-      const positionLabel = player.position === "pitcher" ? "投手" : "野手";
+      const positionLabel = positionLabels[player.position];
+      const grade = schoolYear - player.enrollYear + 1;
+      const gradeLabel = grade >= 4 ? "卒業" : `${grade}年生`;
+
       const statLine = statDefs[player.position]
         .map(def => `${def.label}: ${player.stats[def.key]}`)
         .join(" / ");
 
+      const talentBadge = player.talentLabel
+        ? `<span class="talent-badge">★ ${player.talentLabel}の才能</span>`
+        : "";
+
+      const practiceButtons = practiceMenus[player.position]
+        .map(menu => `<button class="practice-button" data-index="${index}" data-stat="${menu.statKey}">${menu.label}</button>`)
+        .join("");
+
       div.innerHTML = `
         <span class="player-name">${player.name}</span>
         <span class="player-pos">${positionLabel}</span>
+        <span class="player-grade">${gradeLabel}</span>
+        ${talentBadge}
         <div class="stat-line">${statLine}</div>
-        <button class="practice-button" data-index="${index}">練習する</button>
+        <div class="practice-buttons">${practiceButtons}</div>
       `;
       playerListArea.appendChild(div);
     });
   }
 
-  function practicePlayer(index) {
+  function practicePlayer(index, statKey) {
     const player = players[index];
-    const defs = statDefs[player.position];
-    defs.forEach(def => {
-      const gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
-      player.stats[def.key] = Math.min(100, player.stats[def.key] + gain);
-    });
+    const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
+    player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
     renderPlayerList();
   }
 
@@ -234,14 +357,9 @@
     }
 
     const position = positionInput.value;
-    const defs = statDefs[position];
-    const stats = {};
-    defs.forEach(def => {
-      const value = Number(document.getElementById(`stat-${def.key}`).value);
-      stats[def.key] = Math.min(100, Math.max(1, value));
-    });
+    const { stats, talentLabel } = rollNewPlayerStats(position);
 
-    players.push({ name, position, stats });
+    players.push({ name, position, stats, talentLabel, enrollYear: schoolYear });
 
     nameInput.value = "";
     renderPlayerList();
@@ -281,13 +399,12 @@
   playerListArea.addEventListener("click", (event) => {
     if (event.target.classList.contains("practice-button")) {
       const index = Number(event.target.dataset.index);
-      practicePlayer(index);
+      const statKey = event.target.dataset.stat;
+      practicePlayer(index, statKey);
     }
   });
 
-  positionInput.addEventListener("change", renderStatInputs);
-
-  renderStatInputs();
+  renderCalendar();
   renderPlayerList();
   updateFormAvailability();
 </script>
