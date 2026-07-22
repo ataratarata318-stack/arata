@@ -68,12 +68,16 @@
   .official-match-button {
     background: #b3261e;
   }
-  #official-match-result, #practice-game-result {
+  #official-match-result, #practice-game-result, #season-event-result {
     margin-top: 12px;
     font-size: 13px;
     text-align: center;
     color: #444;
     min-height: 18px;
+  }
+  #season-event-result {
+    color: #6a4fb3;
+    font-weight: bold;
   }
   .match-outcome {
     font-size: 16px;
@@ -154,6 +158,16 @@
     padding: 2px 8px;
     border-radius: 10px;
     margin-left: 6px;
+  }
+  .personality-badge {
+    display: inline-block;
+    font-size: 12px;
+    background: #6a4fb3;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    cursor: help;
   }
   .fatigue-line {
     font-size: 12px;
@@ -298,6 +312,7 @@
   <div id="official-match-result"></div>
   <button id="next-week-button">次の週へ</button>
   <div id="practice-game-result"></div>
+  <div id="season-event-result"></div>
 </div>
 
 <div class="card" id="scout-card" style="display:none;">
@@ -417,6 +432,7 @@
   let scoutCandidates = [];
   let scoutIdCounter = 0;
   let playerIdCounter = 0;
+  let scoutBonusTierBoost = 0; // 「有望な転校生」イベントで次のスカウトの質が上がる
   // スタメン・打順: pitcherIdが先発投手、orderが1〜8番打者(打順どおり)の選手ID配列
   let lineup = { pitcherId: null, order: [null, null, null, null, null, null, null, null] };
   const SAVE_KEY = "baseballSimSave";
@@ -502,11 +518,99 @@
     return PLAYER_RANKS.find(rank => sum <= rank.max).label;
   }
 
+  // 選手ごとの個性。才能とは別に、練習の伸び方・怪我のしやすさ・大事な試合での粘りなどに影響する
+  const PERSONALITY_TRAITS = [
+    { id: "late-bloomer", label: "大器晩成", desc: "1年生のうちは伸びが遅いが、2年生以降に伸びが良くなる" },
+    { id: "injury-prone", label: "怪我しやすい", desc: "怪我のリスクがやや高い" },
+    { id: "mental-strength", label: "精神力が強い", desc: "準決勝・決勝など大事な試合に強い" },
+    { id: "hard-worker", label: "練習の虫", desc: "練習の効果が高い" },
+    { id: "durable", label: "丈夫", desc: "疲労が溜まりにくい" },
+  ];
+
+  function getPersonality(player) {
+    return PERSONALITY_TRAITS.find(t => t.id === player.personalityId) || null;
+  }
+
+  function rollPersonalityId() {
+    if (Math.random() < 0.3) {
+      return PERSONALITY_TRAITS[Math.floor(Math.random() * PERSONALITY_TRAITS.length)].id;
+    }
+    return null;
+  }
+
+  // オフシーズンの週に、まれに起きる小さな出来事(良いことも悪いこともある)
+  const RANDOM_EVENTS = [
+    {
+      id: "rain",
+      condition: () => players.length > 0,
+      apply: () => {
+        players.forEach(p => { p.fatigue = Math.min(100, (p.fatigue || 0) + 5 + Math.floor(Math.random() * 6)); });
+        return "☔ 雨で思うように練習できず、全員に疲労が少し溜まった。";
+      },
+    },
+    {
+      id: "ob-visit",
+      condition: () => players.length > 0,
+      apply: () => {
+        players.forEach(p => { p.fatigue = Math.max(0, (p.fatigue || 0) - (15 + Math.floor(Math.random() * 11))); });
+        return "🎁 OBが差し入れを持って激励に来てくれた!全員の疲労が回復した。";
+      },
+    },
+    {
+      id: "transfer-rumor",
+      condition: () => true,
+      apply: () => {
+        scoutBonusTierBoost = 1;
+        return "👀 「有望な転校生がいる」という噂が流れている…次のスカウトに期待がかかる。";
+      },
+    },
+    {
+      id: "injury-recovery",
+      condition: () => players.some(p => p.injuryWeeksLeft > 0),
+      apply: () => {
+        const injured = players.filter(p => p.injuryWeeksLeft > 0);
+        const target = injured[Math.floor(Math.random() * injured.length)];
+        target.injuryWeeksLeft = Math.max(0, target.injuryWeeksLeft - 1);
+        return `🏥 ${target.name}の回復が順調で、復帰が早まりそうだ。`;
+      },
+    },
+    {
+      id: "growth-spurt",
+      condition: () => players.length > 0,
+      apply: () => {
+        const target = players[Math.floor(Math.random() * players.length)];
+        const defs = statDefs[target.position];
+        const def = defs[Math.floor(Math.random() * defs.length)];
+        const gain = 10 + Math.floor(Math.random() * 11);
+        target.stats[def.key] = Math.min(STAT_CAP, target.stats[def.key] + gain);
+        return `📈 ${target.name}が急成長期に入ったようだ!(${def.label}が伸びた)`;
+      },
+    },
+    {
+      id: "minor-slump",
+      condition: () => players.length > 0,
+      apply: () => {
+        const target = players[Math.floor(Math.random() * players.length)];
+        target.fatigue = Math.min(100, (target.fatigue || 0) + 20 + Math.floor(Math.random() * 11));
+        return `😴 ${target.name}が体調を崩しがちで、疲労が溜まっているようだ。`;
+      },
+    },
+  ];
+
+  function maybeTriggerRandomEvent() {
+    if (Math.random() >= 0.35) return "";
+    const candidates = RANDOM_EVENTS.filter(e => e.condition());
+    if (candidates.length === 0) return "";
+    const event = candidates[Math.floor(Math.random() * candidates.length)];
+    return event.apply();
+  }
+
   function createPlayer(name, position, enrollYear) {
     const { stats, talentLabel } = rollNewPlayerStats(position);
     playerIdCounter++;
     return {
       id: playerIdCounter,
+      personalityId: rollPersonalityId(),
       name,
       position,
       stats,
@@ -585,9 +689,11 @@
   }
 
   function generateScoutCandidates() {
-    const tierIndex = players.length > 0
+    const baseTierIndex = players.length > 0
       ? powerTierIndex(totalTeamPower() / players.length)
       : 0;
+    const tierIndex = Math.min(POWER_TIERS.length - 1, baseTierIndex + scoutBonusTierBoost);
+    scoutBonusTierBoost = 0; // 「有望な転校生」イベントの効果は次の1回のスカウトで消費される
     const poolSize = 4 + Math.floor(Math.random() * 2); // 4〜5人の候補を提示する(全員入部させる必要はない)
 
     const candidates = [];
@@ -598,7 +704,7 @@
       usedNames.push(name);
       const { stats, talentLabel } = rollNewPlayerStats(position, tierIndex);
       scoutIdCounter++;
-      candidates.push({ id: scoutIdCounter, name, position, stats, talentLabel });
+      candidates.push({ id: scoutIdCounter, name, position, stats, talentLabel, personalityId: rollPersonalityId() });
     }
 
     // 投手・捕手が1人もいない場合、必ず候補に含める(内野手・外野手は人数が多いので偏っても致命傷になりにくい)
@@ -631,6 +737,7 @@
     playerIdCounter++;
     players.push({
       id: playerIdCounter,
+      personalityId: candidate.personalityId,
       name: candidate.name,
       position: candidate.position,
       stats: candidate.stats,
@@ -678,6 +785,7 @@
   const officialMatchResult = document.getElementById("official-match-result");
   const nextWeekButton = document.getElementById("next-week-button");
   const practiceGameResult = document.getElementById("practice-game-result");
+  const seasonEventResult = document.getElementById("season-event-result");
   const teamPowerLine = document.getElementById("team-power-line");
   const tournamentWeekNote = document.getElementById("tournament-week-note");
   const scoutCard = document.getElementById("scout-card");
@@ -763,10 +871,15 @@
       const talentBadge = candidate.talentLabel
         ? `<span class="talent-badge">★ ${candidate.talentLabel}の才能</span>`
         : "";
+      const personality = PERSONALITY_TRAITS.find(t => t.id === candidate.personalityId);
+      const personalityBadge = personality
+        ? `<span class="personality-badge" title="${personality.desc}">${personality.label}</span>`
+        : "";
       div.innerHTML = `
         <span class="player-name">${candidate.name}</span>
         <span class="player-pos">${positionLabel}</span>
         ${talentBadge}
+        ${personalityBadge}
         <div class="stat-line">${statLine}</div>
         <button class="scout-recruit-button" data-id="${candidate.id}">入部させる</button>
       `;
@@ -987,8 +1100,20 @@
     }
   }
 
+  // 準決勝・決勝など大事な試合では、「精神力が強い」選手がスタメンにいるとチームの実効能力が少し上がる
+  function mentalStrengthBonus(roundInfo) {
+    if (!roundInfo || roundInfo.roundsToWin <= 1) return 1;
+    const isBigMoment = roundInfo.roundNumber >= roundInfo.roundsToWin - 1; // 準決勝・決勝
+    if (!isBigMoment) return 1;
+    const count = getStartingPlayers().filter(p => {
+      const personality = getPersonality(p);
+      return personality && personality.id === "mental-strength";
+    }).length;
+    return 1 + count * 0.05;
+  }
+
   function runMatch(roundInfo) {
-    const teamPower = totalLineupPower();
+    const teamPower = totalLineupPower() * mentalStrengthBonus(roundInfo);
 
     // 大会の試合は、序盤は格下寄り・勝ち進むほど格上と当たりやすくなるように相手の強さの範囲を変える
     // (roundInfoがない練習試合は、これまで通り70%〜130%の範囲)
@@ -1097,11 +1222,20 @@
   // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる(その分、疲労も少し溜まる)
   function grantMatchExperience() {
     getStartingPlayers().forEach(player => {
+      const personality = getPersonality(player);
       const defs = statDefs[player.position];
       const def = defs[Math.floor(Math.random() * defs.length)];
-      const gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
+      let gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
+      if (personality && personality.id === "hard-worker") gain = Math.round(gain * 1.3);
+      if (personality && personality.id === "late-bloomer") {
+        const grade = schoolYear - player.enrollYear + 1;
+        gain = Math.round(gain * (grade <= 1 ? 0.7 : 1.4));
+      }
       player.stats[def.key] = Math.min(STAT_CAP, player.stats[def.key] + gain);
-      player.fatigue = Math.min(100, (player.fatigue || 0) + 5 + Math.floor(Math.random() * 6)); // 5〜10
+
+      let fatigueGain = 5 + Math.floor(Math.random() * 6); // 5〜10
+      if (personality && personality.id === "durable") fatigueGain = Math.round(fatigueGain * 0.7);
+      player.fatigue = Math.min(100, (player.fatigue || 0) + fatigueGain);
     });
   }
 
@@ -1239,6 +1373,9 @@
       practiceGameResult.innerHTML = "";
     }
 
+    // オフシーズンの週には、まれに小さな出来事が起こる
+    seasonEventResult.textContent = !windowT ? maybeTriggerRandomEvent() : "";
+
     renderCalendar();
     renderScoutCandidates();
     renderPlayerList();
@@ -1276,6 +1413,11 @@
         ? `<span class="injury-badge">🤕 故障中(あと${player.injuryWeeksLeft}週)</span>`
         : "";
 
+      const personality = getPersonality(player);
+      const personalityBadge = personality
+        ? `<span class="personality-badge" title="${personality.desc}">${personality.label}</span>`
+        : "";
+
       const fatigue = player.fatigue || 0;
       let fatigueClass = "fatigue-ok";
       if (fatigue >= INJURY_RISK_FATIGUE) fatigueClass = "fatigue-danger";
@@ -1298,6 +1440,7 @@
         <span class="player-grade">${gradeLabel}</span>
         <span class="rank-badge">${playerRankLabel(player)}</span>
         ${talentBadge}
+        ${personalityBadge}
         ${injuryBadge}
         <div class="stat-line">${statLine}</div>
         <div class="fatigue-line ${fatigueClass}">疲労: ${fatigue}</div>
@@ -1325,12 +1468,24 @@
       return;
     }
 
-    const gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
+    const personality = getPersonality(player);
+
+    let gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
+    if (personality && personality.id === "hard-worker") gain = Math.round(gain * 1.3); // 練習の虫: 伸びが良い
+    if (personality && personality.id === "late-bloomer") {
+      // 大器晩成: 1年生のうちは伸びが鈍いが、2年生以降は伸びが良くなる
+      const grade = schoolYear - player.enrollYear + 1;
+      gain = Math.round(gain * (grade <= 1 ? 0.7 : 1.4));
+    }
     player.stats[statKey] = Math.min(STAT_CAP, player.stats[statKey] + gain);
 
-    player.fatigue = Math.min(100, (player.fatigue || 0) + 15 + Math.floor(Math.random() * 11)); // 15〜25 疲労が溜まる
+    let fatigueGain = 15 + Math.floor(Math.random() * 11); // 15〜25 疲労が溜まる
+    if (personality && personality.id === "durable") fatigueGain = Math.round(fatigueGain * 0.7); // 丈夫: 疲労が溜まりにくい
+    player.fatigue = Math.min(100, (player.fatigue || 0) + fatigueGain);
+
     if (player.fatigue >= INJURY_RISK_FATIGUE) {
-      const injuryChance = 0.05 + (player.fatigue - INJURY_RISK_FATIGUE) * 0.01; // 疲労70で5%、100で35%
+      let injuryChance = 0.05 + (player.fatigue - INJURY_RISK_FATIGUE) * 0.01; // 疲労70で5%、100で35%
+      if (personality && personality.id === "injury-prone") injuryChance *= 1.5; // 怪我しやすい
       if (Math.random() < injuryChance) {
         player.injuryWeeksLeft = 1 + Math.floor(Math.random() * 3); // 1〜3週間離脱
         player.fatigue = Math.max(0, player.fatigue - 30);
