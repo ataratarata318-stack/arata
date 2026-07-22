@@ -195,23 +195,6 @@
 </div>
 
 <div class="card">
-  <div id="form-area">
-    <label>選手の名前</label>
-    <input type="text" id="name-input" placeholder="例: 山田太郎">
-
-    <label>ポジション</label>
-    <select id="position-input">
-      <option value="pitcher">投手</option>
-      <option value="catcher">捕手</option>
-      <option value="infielder">内野手</option>
-      <option value="outfielder">外野手</option>
-    </select>
-
-    <button id="add-button">この内容で入部させる</button>
-  </div>
-</div>
-
-<div class="card">
   <h2 style="font-size:16px; margin-top:0;">登録した選手</h2>
   <div id="team-power-line" class="team-power-line"></div>
   <div id="tournament-week-note" class="empty-note" style="display:none;">大会期間中のため、今週は練習できません。</div>
@@ -221,7 +204,6 @@
 </div>
 
 <script>
-  const RECRUITS_PER_YEAR = 3;
   const STAT_CAP = 150;
   const players = [];
 
@@ -309,9 +291,9 @@
   // チームの強さ・選手個人の強さを数字ではなく段階で表現する
   const POWER_TIERS = [
     { max: 99, label: "弱小" },
-    { max: 179, label: "普通" },
-    { max: 259, label: "中堅" },
-    { max: 339, label: "強豪" },
+    { max: 199, label: "普通" },
+    { max: 299, label: "中堅" },
+    { max: 399, label: "強豪" },
     { max: Infinity, label: "甲子園常連校" },
   ];
 
@@ -348,18 +330,52 @@
     return PLAYER_RANKS.find(rank => sum <= rank.max).label;
   }
 
-  function createPlayer(name, position) {
+  function createPlayer(name, position, enrollYear) {
     const { stats, talentLabel } = rollNewPlayerStats(position);
     return {
       name,
       position,
       stats,
       talentLabel,
-      enrollYear: schoolYear,
+      enrollYear: enrollYear === undefined ? schoolYear : enrollYear,
       practicedThisWeek: false,
       selectedPracticeStatKey: practiceMenus[position][0].statKey,
     };
   }
+
+  function randomRecruitName() {
+    return sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
+  }
+
+  function randomPosition() {
+    return allPositions[Math.floor(Math.random() * allPositions.length)];
+  }
+
+  // ゲーム開始時、すでに2・3年生がいるチームを引き継いだ状態からスタートする
+  function generateInitialRoster() {
+    // 3年生(enrollYear = schoolYear - 2)と2年生(enrollYear = schoolYear - 1)を何人か配置
+    [{ grade: 3, count: 3 + Math.floor(Math.random() * 2) },
+     { grade: 2, count: 3 + Math.floor(Math.random() * 2) }].forEach(({ grade, count }) => {
+      const enrollYear = schoolYear - (grade - 1);
+      for (let i = 0; i < count; i++) {
+        const player = createPlayer(randomRecruitName(), randomPosition(), enrollYear);
+        // 上級生はすでに1〜2年分練習を積んでいるぶん、能力を底上げしておく
+        const yearsTrained = grade - 1;
+        const defs = statDefs[player.position];
+        for (let y = 0; y < yearsTrained; y++) {
+          for (let k = 0; k < 3; k++) {
+            const def = defs[Math.floor(Math.random() * defs.length)];
+            const gain = 5 + Math.floor(Math.random() * 10);
+            player.stats[def.key] = Math.min(STAT_CAP, player.stats[def.key] + gain);
+          }
+        }
+        players.push(player);
+      }
+    });
+  }
+
+  // 学校の強さ(段階)に応じて、その春の新入部員の人数が変わる
+  const RECRUIT_COUNT_BY_TIER = [1, 2, 3, 4, 5];
 
   function graduateAndRecruit() {
     // 4年目を迎えた(=3年生を終えた)選手は卒業して抜ける
@@ -368,12 +384,15 @@
       if (grade > 3) players.splice(i, 1);
     }
 
-    // 卒業の有無にかかわらず、毎年春に新入部員が入ってくる(人数の上限はなし)
+    const tierIndex = players.length > 0
+      ? powerTierIndex(totalTeamPower() / players.length)
+      : 0;
+    const recruitCount = RECRUIT_COUNT_BY_TIER[tierIndex] + Math.floor(Math.random() * 2);
+
     const recruitedNames = [];
-    for (let i = 0; i < RECRUITS_PER_YEAR; i++) {
-      const name = sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
-      const position = allPositions[Math.floor(Math.random() * allPositions.length)];
-      players.push(createPlayer(name, position));
+    for (let i = 0; i < recruitCount; i++) {
+      const name = randomRecruitName();
+      players.push(createPlayer(name, randomPosition()));
       recruitedNames.push(name);
     }
     return recruitedNames;
@@ -399,9 +418,6 @@
     return { stats, talentLabel };
   }
 
-  const nameInput = document.getElementById("name-input");
-  const positionInput = document.getElementById("position-input");
-  const addButton = document.getElementById("add-button");
   const playerListArea = document.getElementById("player-list");
   const emptyListNote = document.getElementById("empty-list-note");
   const calendarLine = document.getElementById("calendar-line");
@@ -454,10 +470,20 @@
     }, 0);
   }
 
-  function runMatch() {
+  function runMatch(roundInfo) {
     const teamPower = totalTeamPower();
-    // 相手チームの強さは自チームの70%〜130%の範囲でランダムに決まる
-    const opponentPower = Math.round(teamPower * (0.7 + Math.random() * 0.6));
+
+    // 大会の試合は、序盤は格下寄り・勝ち進むほど格上と当たりやすくなるように相手の強さの範囲を変える
+    // (roundInfoがない練習試合は、これまで通り70%〜130%の範囲)
+    let low = 0.7;
+    let high = 1.3;
+    if (roundInfo && roundInfo.roundsToWin > 1) {
+      const progress = (roundInfo.roundNumber - 1) / (roundInfo.roundsToWin - 1); // 0(1回戦)〜1(決勝)
+      low = 0.5 + progress * 0.4;   // 0.5 → 0.9
+      high = 0.9 + progress * 0.7;  // 0.9 → 1.6
+    }
+    const opponentPower = Math.round(teamPower * (low + Math.random() * (high - low)));
+
     // 自チームが強いほど勝ちやすいが、多少の運の要素もある
     const winProbability = teamPower / (teamPower + opponentPower);
     const isWin = Math.random() < winProbability;
@@ -537,8 +563,9 @@
     if (!windowT || !isMatchAvailable(windowT)) return;
 
     const state = tournamentState[windowT.id];
-    const label = roundLabel(windowT.roundsToWin, state.currentRound + 1);
-    const result = runMatch();
+    const roundNumber = state.currentRound + 1;
+    const label = roundLabel(windowT.roundsToWin, roundNumber);
+    const result = runMatch({ roundNumber, roundsToWin: windowT.roundsToWin });
 
     if (result.isWin) {
       state.currentRound++;
@@ -651,7 +678,7 @@
   }
 
   function applyPracticeGain(player, statKey) {
-    const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
+    const gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
     player.stats[statKey] = Math.min(STAT_CAP, player.stats[statKey] + gain);
   }
 
@@ -663,20 +690,6 @@
     player.practicedThisWeek = true;
     renderPlayerList();
   }
-
-  addButton.addEventListener("click", () => {
-    const name = nameInput.value.trim();
-    if (!name) {
-      alert("選手の名前を入力してください。");
-      return;
-    }
-
-    const position = positionInput.value;
-    players.push(createPlayer(name, position));
-
-    nameInput.value = "";
-    renderPlayerList();
-  });
 
   playerListArea.addEventListener("click", (event) => {
     if (event.target.classList.contains("practice-execute-button")) {
@@ -725,6 +738,12 @@
     });
     renderPlayerList();
   });
+
+  generateInitialRoster();
+  const firstYearRecruits = graduateAndRecruit();
+  if (firstYearRecruits.length > 0) {
+    seasonEventMessage = `入学式が行われました。新入部員が入部しました: ${firstYearRecruits.join("、")}`;
+  }
 
   renderCalendar();
   renderPlayerList();
