@@ -77,6 +77,13 @@
     margin-top: 4px;
     color: #444;
   }
+  .practice-button {
+    margin-top: 8px;
+    width: auto;
+    padding: 6px 12px;
+    font-size: 13px;
+    background: #3d7dd6;
+  }
   .empty-note {
     text-align: center;
     color: #888;
@@ -162,7 +169,7 @@
     playerListArea.innerHTML = "";
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
 
-    players.forEach(player => {
+    players.forEach((player, index) => {
       const div = document.createElement("div");
       div.className = "player";
 
@@ -175,9 +182,20 @@
         <span class="player-name">${player.name}</span>
         <span class="player-pos">${positionLabel}</span>
         <div class="stat-line">${statLine}</div>
+        <button class="practice-button" data-index="${index}">練習する</button>
       `;
       playerListArea.appendChild(div);
     });
+  }
+
+  function practicePlayer(index) {
+    const player = players[index];
+    const defs = statDefs[player.position];
+    defs.forEach(def => {
+      const gain = 1 + Math.floor(Math.random() * 3); // 1〜3ポイント上がる
+      player.stats[def.key] = Math.min(100, player.stats[def.key] + gain);
+    });
+    renderPlayerList();
   }
 
   function updateFormAvailability() {
@@ -206,6 +224,13 @@
     nameInput.value = "";
     renderPlayerList();
     updateFormAvailability();
+  });
+
+  playerListArea.addEventListener("click", (event) => {
+    if (event.target.classList.contains("practice-button")) {
+      const index = Number(event.target.dataset.index);
+      practicePlayer(index);
+    }
   });
 
   positionInput.addEventListener("change", renderStatInputs);
