@@ -278,7 +278,10 @@
 
 <h1>⚾ 高校野球 選手育成シミュレーション</h1>
 
-<div style="text-align:center; max-width:480px; margin:0 auto;">
+<div style="text-align:center; max-width:480px; margin:0 auto; display:flex; flex-wrap:wrap; gap:6px; justify-content:center;">
+  <button id="export-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#3d7dd6;">セーブデータを書き出す</button>
+  <button id="import-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#3d7dd6;">セーブデータを読み込む</button>
+  <input type="file" id="import-file-input" accept="application/json" style="display:none;">
   <button id="reset-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#b3261e;">データをリセットして最初から</button>
 </div>
 
@@ -517,8 +520,17 @@
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  // 実際のチーム編成に近い比率(投手・捕手は少なめ、内野手は多めなど)でポジションを決める
+  const POSITION_WEIGHTS = { pitcher: 0.2, catcher: 0.15, infielder: 0.4, outfielder: 0.25 };
+
   function randomPosition() {
-    return allPositions[Math.floor(Math.random() * allPositions.length)];
+    const r = Math.random();
+    let acc = 0;
+    for (const position of allPositions) {
+      acc += POSITION_WEIGHTS[position];
+      if (r <= acc) return position;
+    }
+    return allPositions[allPositions.length - 1];
   }
 
   // 投手が0人にならないよう、必要なら直近の選手を投手として振り直す
@@ -583,14 +595,24 @@
       candidates.push({ id: scoutIdCounter, name, position, stats, talentLabel });
     }
 
-    // 投手候補が1人もいない場合、必ず1人は投手候補になるようにする
-    const hasPitcherOnRoster = players.some(p => p.position === "pitcher");
-    if (!hasPitcherOnRoster && !candidates.some(c => c.position === "pitcher")) {
-      const target = candidates[Math.floor(Math.random() * candidates.length)];
-      target.position = "pitcher";
-      const rerolled = rollNewPlayerStats("pitcher", tierIndex);
+    // 投手・捕手が1人もいない場合、必ず候補に含める(内野手・外野手は人数が多いので偏っても致命傷になりにくい)
+    const forcedUsed = new Set();
+    function forcePosition(position) {
+      const idx = candidates.findIndex((c, i) => !forcedUsed.has(i));
+      if (idx === -1) return;
+      forcedUsed.add(idx);
+      const target = candidates[idx];
+      target.position = position;
+      const rerolled = rollNewPlayerStats(position, tierIndex);
       target.stats = rerolled.stats;
       target.talentLabel = rerolled.talentLabel;
+    }
+
+    if (!players.some(p => p.position === "pitcher") && !candidates.some(c => c.position === "pitcher")) {
+      forcePosition("pitcher");
+    }
+    if (!players.some(p => p.position === "catcher") && !candidates.some(c => c.position === "catcher")) {
+      forcePosition("catcher");
     }
 
     return candidates;
@@ -749,6 +771,48 @@
       localStorage.removeItem(SAVE_KEY);
       location.reload();
     }
+  });
+
+  const exportButton = document.getElementById("export-button");
+  const importButton = document.getElementById("import-button");
+  const importFileInput = document.getElementById("import-file-input");
+
+  // 保存データをファイルとして書き出す(他の端末・ブラウザへ手動で持ち運ぶため)
+  exportButton.addEventListener("click", () => {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      alert("まだ保存されているデータがありません。");
+      return;
+    }
+    const blob = new Blob([raw], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "baseball-sim-save.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  importButton.addEventListener("click", () => {
+    importFileInput.click();
+  });
+
+  importFileInput.addEventListener("change", () => {
+    const file = importFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        JSON.parse(reader.result); // 形式チェック
+        localStorage.setItem(SAVE_KEY, reader.result);
+        alert("セーブデータを読み込みました。ページを再読み込みします。");
+        location.reload();
+      } catch (e) {
+        alert("このファイルは読み込めませんでした(壊れているか、対応していない形式です)。");
+      }
+    };
+    reader.readAsText(file);
+    importFileInput.value = "";
   });
 
   function saveGame() {
@@ -917,18 +981,27 @@
     const opponentTier = powerTierLabel(opponentPower / count);
     const opponentSchool = pickRivalSchool();
     recordRivalResult(opponentSchool.name, isWin);
-    return { teamPower, opponentPower, isWin, teamTier, opponentTier, opponentSchool };
+    return { teamPower, opponentPower, isWin, teamTier, opponentTier, opponentSchool, winProbability };
   }
 
   const INNING_COUNT = 9;
 
-  // 勝敗の結果と矛盾しないように、9イニング分の得点経過を作る
-  function generateBoxScore(isWin) {
+  // 実力差が大きいほど、その回の得点が多く出やすくなる(実力伯仲なら0〜1点、大差なら2〜4点も出やすい)
+  function randomInningRuns(rate) {
+    const raw = Math.random() * rate * 2;
+    return Math.min(4, Math.round(raw));
+  }
+
+  // 勝敗の結果・実力差(winProbability)と矛盾しないように、9イニング分の得点経過を作る
+  function generateBoxScore(isWin, winProbability) {
+    const teamRate = 0.5 + winProbability * 1.3;       // 劣勢なら0.5前後、優勢なら1.8前後
+    const oppRate = 0.5 + (1 - winProbability) * 1.3;
+
     const teamRuns = [];
     const oppRuns = [];
     for (let i = 0; i < INNING_COUNT; i++) {
-      teamRuns.push(Math.floor(Math.random() * 3)); // 0〜2点
-      oppRuns.push(Math.floor(Math.random() * 3));
+      teamRuns.push(randomInningRuns(teamRate));
+      oppRuns.push(randomInningRuns(oppRate));
     }
     let teamTotal = teamRuns.reduce((a, b) => a + b, 0);
     let oppTotal = oppRuns.reduce((a, b) => a + b, 0);
@@ -968,7 +1041,7 @@
   }
 
   function buildMatchReportHtml(label, result) {
-    const box = generateBoxScore(result.isWin);
+    const box = generateBoxScore(result.isWin, result.winProbability);
     const school = result.opponentSchool;
     const commentary = buildCommentary(box, result.isWin, school.name);
     const inningHeaders = box.teamRuns.map((_, i) => `<th>${i + 1}</th>`).join("") + "<th>計</th>";
@@ -1061,6 +1134,10 @@
       alert("スタメンに投手がいません。「スタメン・打順」で先発投手を選んでください。");
       return;
     }
+    if (lineup.order.filter(Boolean).length < 8) {
+      alert("スタメンが9人そろっていません(投手+打順8人が必要です)。選手を増やすか「スタメン・打順」で打順を埋めてください。");
+      return;
+    }
     const windowT = findWindowTournament();
     if (!windowT || !isMatchAvailable(windowT)) return;
 
@@ -1129,7 +1206,8 @@
     autoFillLineup();
 
     const windowT = findWindowTournament();
-    if (!windowT && players.length > 0 && lineup.pitcherId && Math.random() < 0.25) {
+    const hasFullLineup = lineup.pitcherId && lineup.order.filter(Boolean).length >= 8;
+    if (!windowT && hasFullLineup && Math.random() < 0.25) {
       const result = runMatch();
       grantMatchExperience();
       practiceGameResult.innerHTML = buildMatchReportHtml("練習試合", result);
