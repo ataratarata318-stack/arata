@@ -179,11 +179,21 @@
     font-size: 12px;
     background: #6a4fb3;
   }
+  .scout-recruit-button {
+    margin-top: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: #1a5d2b;
+  }
 </style>
 </head>
 <body>
 
 <h1>⚾ 高校野球 選手育成シミュレーション</h1>
+
+<div style="text-align:center; max-width:480px; margin:0 auto;">
+  <button id="reset-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#b3261e;">データをリセットして最初から</button>
+</div>
 
 <div class="card">
   <div class="calendar-line" id="calendar-line"></div>
@@ -192,6 +202,12 @@
   <div id="official-match-result"></div>
   <button id="next-week-button">次の週へ</button>
   <div id="practice-game-result"></div>
+</div>
+
+<div class="card" id="scout-card" style="display:none;">
+  <h2 style="font-size:16px; margin-top:0;">スカウト候補</h2>
+  <div class="empty-note" style="margin-top:0;">気に入った選手を選んで入部させましょう(全員入れる必要はありません)。</div>
+  <div id="scout-list"></div>
 </div>
 
 <div class="card">
@@ -283,6 +299,9 @@
   let weekIndex = 0;
   let officialMatchPlayedThisWeek = false;
   let seasonEventMessage = "";
+  let scoutCandidates = [];
+  let scoutIdCounter = 0;
+  const SAVE_KEY = "baseballSimSave";
 
   // 新入部員の自動生成に使う名前とポジションの候補
   const sampleRecruitNames = [
@@ -348,8 +367,8 @@
     };
   }
 
-  function randomRecruitName() {
-    const activeNames = new Set(players.map(p => p.name));
+  function randomRecruitName(excludeNames) {
+    const activeNames = new Set([...players.map(p => p.name), ...(excludeNames || [])]);
     const available = sampleRecruitNames.filter(n => !activeNames.has(n));
     const pool = available.length > 0 ? available : sampleRecruitNames;
     return pool[Math.floor(Math.random() * pool.length)];
@@ -393,43 +412,80 @@
     });
   }
 
-  // 学校の強さ(段階)に応じて、その春の新入部員の人数が変わる
-  const RECRUIT_COUNT_BY_TIER = [1, 2, 3, 4, 5];
-
-  function graduateAndRecruit() {
+  // 卒業させたうえで、スカウト候補(新入部員候補)を生成する。人数はほぼ一定で、
+  // 学校の強さは「人数」ではなく候補選手の「質」(能力の初期値・才能の出やすさ)に反映する
+  function processGraduationAndScout() {
     // 4年目を迎えた(=3年生を終えた)選手は卒業して抜ける
     for (let i = players.length - 1; i >= 0; i--) {
       const grade = schoolYear - players[i].enrollYear + 1;
       if (grade > 3) players.splice(i, 1);
     }
+    scoutCandidates = generateScoutCandidates();
+  }
 
+  function generateScoutCandidates() {
     const tierIndex = players.length > 0
       ? powerTierIndex(totalTeamPower() / players.length)
       : 0;
-    const recruitCount = RECRUIT_COUNT_BY_TIER[tierIndex] + Math.floor(Math.random() * 2);
+    const poolSize = 4 + Math.floor(Math.random() * 2); // 4〜5人の候補を提示する(全員入部させる必要はない)
 
-    const recruitedNames = [];
-    for (let i = 0; i < recruitCount; i++) {
-      const name = randomRecruitName();
-      players.push(createPlayer(name, randomPosition()));
-      recruitedNames.push(name);
+    const candidates = [];
+    const usedNames = [];
+    for (let i = 0; i < poolSize; i++) {
+      const position = randomPosition();
+      const name = randomRecruitName(usedNames);
+      usedNames.push(name);
+      const { stats, talentLabel } = rollNewPlayerStats(position, tierIndex);
+      scoutIdCounter++;
+      candidates.push({ id: scoutIdCounter, name, position, stats, talentLabel });
     }
 
-    ensurePitcherExists();
-    return recruitedNames;
+    // 投手候補が1人もいない場合、必ず1人は投手候補になるようにする
+    const hasPitcherOnRoster = players.some(p => p.position === "pitcher");
+    if (!hasPitcherOnRoster && !candidates.some(c => c.position === "pitcher")) {
+      const target = candidates[Math.floor(Math.random() * candidates.length)];
+      target.position = "pitcher";
+      const rerolled = rollNewPlayerStats("pitcher", tierIndex);
+      target.stats = rerolled.stats;
+      target.talentLabel = rerolled.talentLabel;
+    }
+
+    return candidates;
   }
 
-  function rollNewPlayerStats(position) {
+  function recruitCandidate(id) {
+    const index = scoutCandidates.findIndex(c => c.id === id);
+    if (index === -1) return;
+    const candidate = scoutCandidates[index];
+    players.push({
+      name: candidate.name,
+      position: candidate.position,
+      stats: candidate.stats,
+      talentLabel: candidate.talentLabel,
+      enrollYear: schoolYear,
+      practicedThisWeek: false,
+      selectedPracticeStatKey: practiceMenus[candidate.position][0].statKey,
+    });
+    scoutCandidates.splice(index, 1);
+    renderScoutCandidates();
+    renderPlayerList();
+  }
+
+  function rollNewPlayerStats(position, tierIndex) {
+    const idx = tierIndex || 0;
     const defs = statDefs[position];
     const stats = {};
-    // 入学したての1年生は基本的に能力が低め(15〜30)
+    // 入学したての1年生は基本的に能力が低め。学校が強いほど、少しだけ有望な新入生が来やすくなる
+    const baseMin = 15 + idx * 3;
+    const baseMax = 30 + idx * 5;
     defs.forEach(def => {
-      stats[def.key] = 15 + Math.floor(Math.random() * 16);
+      stats[def.key] = baseMin + Math.floor(Math.random() * (baseMax - baseMin + 1));
     });
 
-    // 一定確率で「才能」が発動し、1つの能力だけ大きく伸びる
+    // 一定確率で「才能」が発動し、1つの能力だけ大きく伸びる(学校が強いほど才能持ちが出やすい)
     let talentLabel = null;
-    if (Math.random() < 0.3) {
+    const talentChance = 0.25 + idx * 0.08;
+    if (Math.random() < talentChance) {
       const def = defs[Math.floor(Math.random() * defs.length)];
       const bonus = 15 + Math.floor(Math.random() * 21); // +15〜35
       stats[def.key] = Math.min(STAT_CAP, stats[def.key] + bonus);
@@ -449,6 +505,90 @@
   const practiceGameResult = document.getElementById("practice-game-result");
   const teamPowerLine = document.getElementById("team-power-line");
   const tournamentWeekNote = document.getElementById("tournament-week-note");
+  const scoutCard = document.getElementById("scout-card");
+  const scoutListArea = document.getElementById("scout-list");
+  const resetButton = document.getElementById("reset-button");
+
+  function renderScoutCandidates() {
+    scoutCard.style.display = scoutCandidates.length > 0 ? "block" : "none";
+    scoutListArea.innerHTML = "";
+    scoutCandidates.forEach(candidate => {
+      const div = document.createElement("div");
+      div.className = "player";
+      const positionLabel = positionLabels[candidate.position];
+      const statLine = statDefs[candidate.position]
+        .map(def => `${def.label}: ${candidate.stats[def.key]}`)
+        .join(" / ");
+      const talentBadge = candidate.talentLabel
+        ? `<span class="talent-badge">★ ${candidate.talentLabel}の才能</span>`
+        : "";
+      div.innerHTML = `
+        <span class="player-name">${candidate.name}</span>
+        <span class="player-pos">${positionLabel}</span>
+        ${talentBadge}
+        <div class="stat-line">${statLine}</div>
+        <button class="scout-recruit-button" data-id="${candidate.id}">入部させる</button>
+      `;
+      scoutListArea.appendChild(div);
+    });
+  }
+
+  scoutListArea.addEventListener("click", (event) => {
+    if (event.target.classList.contains("scout-recruit-button")) {
+      recruitCandidate(Number(event.target.dataset.id));
+    }
+  });
+
+  resetButton.addEventListener("click", () => {
+    if (confirm("保存されているデータを削除して最初からやり直します。よろしいですか?")) {
+      localStorage.removeItem(SAVE_KEY);
+      location.reload();
+    }
+  });
+
+  function saveGame() {
+    const state = {
+      players,
+      schoolYear,
+      weekIndex,
+      officialMatchPlayedThisWeek,
+      seasonEventMessage,
+      tournamentState,
+      scoutCandidates,
+      scoutIdCounter,
+      bulkSelectionByPosition,
+    };
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    } catch (e) {
+      // 保存に失敗しても(容量制限など)ゲーム自体は続行できるようにする
+    }
+  }
+
+  function loadGame() {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    try {
+      const state = JSON.parse(raw);
+      players.length = 0;
+      players.push(...state.players);
+      schoolYear = state.schoolYear;
+      weekIndex = state.weekIndex;
+      officialMatchPlayedThisWeek = state.officialMatchPlayedThisWeek;
+      seasonEventMessage = state.seasonEventMessage || "";
+      Object.keys(tournamentState).forEach(id => {
+        if (state.tournamentState && state.tournamentState[id]) {
+          Object.assign(tournamentState[id], state.tournamentState[id]);
+        }
+      });
+      scoutCandidates = state.scoutCandidates || [];
+      scoutIdCounter = state.scoutIdCounter || 0;
+      Object.assign(bulkSelectionByPosition, state.bulkSelectionByPosition || {});
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   function roundLabel(roundsToWin, roundNumber) {
     const fromEnd = roundsToWin - roundNumber;
@@ -548,7 +688,7 @@
         statusLine.textContent = `${windowT.name} ${roundLabel(windowT.roundsToWin, state.currentRound + 1)}の期間です。`;
       }
     } else if (weekIndex === 0) {
-      statusLine.textContent = seasonEventMessage || "入学式が行われました。新入生を迎え入れましょう。";
+      statusLine.textContent = seasonEventMessage || "入学式が行われました。";
     } else if (weekIndex === TOTAL_WEEKS - 1) {
       statusLine.textContent = "学年末です。来週から新学年になります。";
     } else {
@@ -617,15 +757,18 @@
       if (!p.practicedThisWeek) applyPracticeGain(p, p.selectedPracticeStatKey);
     });
 
+    const previousWeekIndex = weekIndex;
     weekIndex++;
     seasonEventMessage = "";
     if (weekIndex >= TOTAL_WEEKS) {
       weekIndex = 0;
       schoolYear++;
-      const recruitedNames = graduateAndRecruit();
-      if (recruitedNames.length > 0) {
-        seasonEventMessage = `入学式が行われました。新入部員が入部しました: ${recruitedNames.join("、")}`;
-      }
+      processGraduationAndScout();
+      seasonEventMessage = "入学式が行われました。下のスカウト欄から新入部員を選びましょう。";
+    } else if (previousWeekIndex === 3 && weekIndex === 4) {
+      // 4月が終わったら、まだ入部していないスカウト候補はいなくなる(投手が0人ならここで確保する)
+      scoutCandidates = [];
+      ensurePitcherExists();
     }
 
     officialMatchPlayedThisWeek = false;
@@ -642,6 +785,7 @@
     }
 
     renderCalendar();
+    renderScoutCandidates();
     renderPlayerList();
   });
 
@@ -696,6 +840,7 @@
     });
 
     updateNextWeekButtonState();
+    saveGame();
   }
 
   function applyPracticeGain(player, statKey) {
@@ -768,13 +913,14 @@
     renderPlayerList();
   });
 
-  generateInitialRoster();
-  const firstYearRecruits = graduateAndRecruit();
-  if (firstYearRecruits.length > 0) {
-    seasonEventMessage = `入学式が行われました。新入部員が入部しました: ${firstYearRecruits.join("、")}`;
+  if (!loadGame()) {
+    generateInitialRoster();
+    processGraduationAndScout();
+    seasonEventMessage = "入学式が行われました。下のスカウト欄から新入部員を選びましょう。";
   }
 
   renderCalendar();
+  renderScoutCandidates();
   renderPlayerList();
 </script>
 
