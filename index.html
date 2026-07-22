@@ -84,6 +84,22 @@
     font-size: 13px;
     background: #3d7dd6;
   }
+  #match-result {
+    margin-top: 14px;
+    font-size: 14px;
+  }
+  .match-outcome {
+    font-size: 20px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .match-outcome.win { color: #1a5d2b; }
+  .match-outcome.lose { color: #b3261e; }
+  .match-power-line {
+    text-align: center;
+    color: #555;
+  }
   .empty-note {
     text-align: center;
     color: #888;
@@ -120,6 +136,12 @@
   <h2 style="font-size:16px; margin-top:0;">登録した選手</h2>
   <div id="player-list"></div>
   <div id="empty-list-note" class="empty-note">まだ選手が登録されていません。</div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:16px; margin-top:0;">試合</h2>
+  <button id="match-button">試合をする</button>
+  <div id="match-result"></div>
 </div>
 
 <script>
@@ -224,6 +246,36 @@
     nameInput.value = "";
     renderPlayerList();
     updateFormAvailability();
+  });
+
+  const matchButton = document.getElementById("match-button");
+  const matchResultArea = document.getElementById("match-result");
+
+  function totalTeamPower() {
+    return players.reduce((sum, player) => {
+      const statValues = Object.values(player.stats);
+      return sum + statValues.reduce((s, v) => s + v, 0);
+    }, 0);
+  }
+
+  matchButton.addEventListener("click", () => {
+    if (players.length === 0) {
+      alert("試合をする前に選手を登録してください。");
+      return;
+    }
+
+    const teamPower = totalTeamPower();
+    // 相手チームの強さは自チームの70%〜130%の範囲でランダムに決まる
+    const opponentPower = Math.round(teamPower * (0.7 + Math.random() * 0.6));
+
+    // 自チームが強いほど勝ちやすいが、多少の運の要素もある
+    const winProbability = teamPower / (teamPower + opponentPower);
+    const isWin = Math.random() < winProbability;
+
+    matchResultArea.innerHTML = `
+      <div class="match-outcome ${isWin ? "win" : "lose"}">${isWin ? "🎉 勝利!" : "😢 敗北..."}</div>
+      <div class="match-power-line">自チームの総合力: ${teamPower} / 相手チームの総合力: ${opponentPower}</div>
+    `;
   });
 
   playerListArea.addEventListener("click", (event) => {
