@@ -185,6 +185,22 @@
     font-size: 12px;
     background: #1a5d2b;
   }
+  .lineup-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+  }
+  .lineup-row label {
+    flex: 0 0 36px;
+    margin-top: 0;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .lineup-row select {
+    margin-top: 0;
+    flex: 1;
+  }
 </style>
 </head>
 <body>
@@ -208,6 +224,14 @@
   <h2 style="font-size:16px; margin-top:0;">スカウト候補</h2>
   <div class="empty-note" style="margin-top:0;">気に入った選手を選んで入部させましょう(全員入れる必要はありません)。</div>
   <div id="scout-list"></div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:16px; margin-top:0;">スタメン・打順</h2>
+  <div class="empty-note" style="margin-top:0;">試合はここで選んだ9人だけで戦います。出場した選手だけ試合の経験で能力が伸びます。</div>
+  <label>先発投手</label>
+  <select id="lineup-pitcher-select"></select>
+  <div id="lineup-order-area" style="margin-top:8px;"></div>
 </div>
 
 <div class="card">
@@ -301,6 +325,9 @@
   let seasonEventMessage = "";
   let scoutCandidates = [];
   let scoutIdCounter = 0;
+  let playerIdCounter = 0;
+  // スタメン・打順: pitcherIdが先発投手、orderが1〜8番打者(打順どおり)の選手ID配列
+  let lineup = { pitcherId: null, order: [null, null, null, null, null, null, null, null] };
   const SAVE_KEY = "baseballSimSave";
 
   // 新入部員の自動生成に使う名前とポジションの候補
@@ -356,7 +383,9 @@
 
   function createPlayer(name, position, enrollYear) {
     const { stats, talentLabel } = rollNewPlayerStats(position);
+    playerIdCounter++;
     return {
+      id: playerIdCounter,
       name,
       position,
       stats,
@@ -457,7 +486,9 @@
     const index = scoutCandidates.findIndex(c => c.id === id);
     if (index === -1) return;
     const candidate = scoutCandidates[index];
+    playerIdCounter++;
     players.push({
+      id: playerIdCounter,
       name: candidate.name,
       position: candidate.position,
       stats: candidate.stats,
@@ -508,6 +539,44 @@
   const scoutCard = document.getElementById("scout-card");
   const scoutListArea = document.getElementById("scout-list");
   const resetButton = document.getElementById("reset-button");
+  const lineupPitcherSelect = document.getElementById("lineup-pitcher-select");
+  const lineupOrderArea = document.getElementById("lineup-order-area");
+
+  function renderLineupControls() {
+    const pitchers = players.filter(p => p.position === "pitcher");
+    lineupPitcherSelect.innerHTML = pitchers.length > 0
+      ? pitchers.map(p => `<option value="${p.id}" ${p.id === lineup.pitcherId ? "selected" : ""}>${p.name}(${playerRankLabel(p)})</option>`).join("")
+      : `<option value="">投手がいません</option>`;
+
+    lineupOrderArea.innerHTML = "";
+    const fielders = players.filter(p => p.position !== "pitcher");
+    for (let slot = 0; slot < 8; slot++) {
+      const usedElsewhere = lineup.order.filter((id, idx) => idx !== slot);
+      const selectable = fielders.filter(p => !usedElsewhere.includes(p.id));
+      const currentId = lineup.order[slot];
+      const optionsHtml = [`<option value="">-- 空き --</option>`]
+        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerRankLabel(p)})</option>`))
+        .join("");
+      const row = document.createElement("div");
+      row.className = "lineup-row";
+      row.innerHTML = `<label>${slot + 1}番</label><select class="lineup-order-select" data-slot="${slot}">${optionsHtml}</select>`;
+      lineupOrderArea.appendChild(row);
+    }
+  }
+
+  lineupPitcherSelect.addEventListener("change", () => {
+    lineup.pitcherId = lineupPitcherSelect.value ? Number(lineupPitcherSelect.value) : null;
+    renderLineupControls();
+    saveGame();
+  });
+
+  lineupOrderArea.addEventListener("change", (event) => {
+    if (!event.target.classList.contains("lineup-order-select")) return;
+    const slot = Number(event.target.dataset.slot);
+    lineup.order[slot] = event.target.value ? Number(event.target.value) : null;
+    renderLineupControls();
+    saveGame();
+  });
 
   function renderScoutCandidates() {
     scoutCard.style.display = scoutCandidates.length > 0 ? "block" : "none";
@@ -556,6 +625,8 @@
       tournamentState,
       scoutCandidates,
       scoutIdCounter,
+      playerIdCounter,
+      lineup,
       bulkSelectionByPosition,
     };
     try {
@@ -583,6 +654,8 @@
       });
       scoutCandidates = state.scoutCandidates || [];
       scoutIdCounter = state.scoutIdCounter || 0;
+      playerIdCounter = state.playerIdCounter || 0;
+      lineup = state.lineup || { pitcherId: null, order: [null, null, null, null, null, null, null, null] };
       Object.assign(bulkSelectionByPosition, state.bulkSelectionByPosition || {});
       return true;
     } catch (e) {
@@ -631,8 +704,51 @@
     }, 0);
   }
 
+  function getStartingPlayers() {
+    const ids = [lineup.pitcherId, ...lineup.order].filter(id => id !== null && id !== undefined);
+    return players.filter(p => ids.includes(p.id));
+  }
+
+  // スタメンに入っている選手だけで試合の力を計算する(打順1〜5番は少し重みを大きくする)
+  function totalLineupPower() {
+    let sum = 0;
+    const pitcher = players.find(p => p.id === lineup.pitcherId);
+    if (pitcher) sum += playerPowerSum(pitcher);
+    lineup.order.forEach((id, idx) => {
+      if (!id) return;
+      const p = players.find(pl => pl.id === id);
+      if (!p) return;
+      const weight = idx < 5 ? 1.15 : 1.0;
+      sum += playerPowerSum(p) * weight;
+    });
+    return sum;
+  }
+
+  // 卒業などでいなくなった選手をスタメンから外し、空いた枠には残りで一番能力が高い選手を自動で補う
+  function autoFillLineup() {
+    const pitchers = players.filter(p => p.position === "pitcher");
+    if (!lineup.pitcherId || !pitchers.some(p => p.id === lineup.pitcherId)) {
+      const best = [...pitchers].sort((a, b) => playerPowerSum(b) - playerPowerSum(a))[0];
+      lineup.pitcherId = best ? best.id : null;
+    }
+
+    lineup.order = lineup.order.map(id => (id && players.some(p => p.id === id)) ? id : null);
+    while (lineup.order.length < 8) lineup.order.push(null);
+
+    const usedIds = new Set([lineup.pitcherId, ...lineup.order].filter(Boolean));
+    const availableSorted = players
+      .filter(p => p.position !== "pitcher" && !usedIds.has(p.id))
+      .sort((a, b) => playerPowerSum(b) - playerPowerSum(a));
+
+    for (let i = 0; i < 8; i++) {
+      if (!lineup.order[i] && availableSorted.length > 0) {
+        lineup.order[i] = availableSorted.shift().id;
+      }
+    }
+  }
+
   function runMatch(roundInfo) {
-    const teamPower = totalTeamPower();
+    const teamPower = totalLineupPower();
 
     // 大会の試合は、序盤は格下寄り・勝ち進むほど格上と当たりやすくなるように相手の強さの範囲を変える
     // (roundInfoがない練習試合は、これまで通り70%〜130%の範囲)
@@ -648,15 +764,16 @@
     // 自チームが強いほど勝ちやすいが、多少の運の要素もある
     const winProbability = teamPower / (teamPower + opponentPower);
     const isWin = Math.random() < winProbability;
-    const count = players.length || 1;
+    const starters = getStartingPlayers();
+    const count = starters.length || 1;
     const teamTier = powerTierLabel(teamPower / count);
     const opponentTier = powerTierLabel(opponentPower / count);
     return { teamPower, opponentPower, isWin, teamTier, opponentTier };
   }
 
-  // 試合を経験することで、参加した選手の能力が少しずつ伸びる
+  // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる
   function grantMatchExperience() {
-    players.forEach(player => {
+    getStartingPlayers().forEach(player => {
       const defs = statDefs[player.position];
       const def = defs[Math.floor(Math.random() * defs.length)];
       const gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
@@ -687,8 +804,10 @@
       } else {
         statusLine.textContent = `${windowT.name} ${roundLabel(windowT.roundsToWin, state.currentRound + 1)}の期間です。`;
       }
+    } else if (seasonEventMessage) {
+      statusLine.textContent = seasonEventMessage;
     } else if (weekIndex === 0) {
-      statusLine.textContent = seasonEventMessage || "入学式が行われました。";
+      statusLine.textContent = "新学期が始まりました。";
     } else if (weekIndex === TOTAL_WEEKS - 1) {
       statusLine.textContent = "学年末です。来週から新学年になります。";
     } else {
@@ -716,8 +835,8 @@
   }
 
   officialMatchButton.addEventListener("click", () => {
-    if (players.length === 0) {
-      alert("試合をする前に選手を登録してください。");
+    if (!lineup.pitcherId) {
+      alert("スタメンに投手がいません。「スタメン・打順」で先発投手を選んでください。");
       return;
     }
     const windowT = findWindowTournament();
@@ -763,10 +882,14 @@
     if (weekIndex >= TOTAL_WEEKS) {
       weekIndex = 0;
       schoolYear++;
+    }
+
+    if (previousWeekIndex === 0 && weekIndex === 1) {
+      // 4月2週目に入学式・スカウトが始まる
       processGraduationAndScout();
       seasonEventMessage = "入学式が行われました。下のスカウト欄から新入部員を選びましょう。";
-    } else if (previousWeekIndex === 3 && weekIndex === 4) {
-      // 4月が終わったら、まだ入部していないスカウト候補はいなくなる(投手が0人ならここで確保する)
+    } else if (previousWeekIndex === 1 && weekIndex === 2) {
+      // スカウトの検討期間はその週だけ。決めなかった候補はいなくなる(投手が0人ならここで確保する)
       scoutCandidates = [];
       ensurePitcherExists();
     }
@@ -775,8 +898,10 @@
     officialMatchResult.textContent = "";
     players.forEach(p => { p.practicedThisWeek = false; });
 
+    autoFillLineup();
+
     const windowT = findWindowTournament();
-    if (!windowT && players.length > 0 && Math.random() < 0.25) {
+    if (!windowT && players.length > 0 && lineup.pitcherId && Math.random() < 0.25) {
       const result = runMatch();
       grantMatchExperience();
       practiceGameResult.textContent = `練習試合が行われました: ${result.isWin ? "勝利!" : "敗北..."}(自チーム: ${result.teamTier} / 相手: ${result.opponentTier})`;
@@ -790,6 +915,8 @@
   });
 
   function renderPlayerList() {
+    autoFillLineup();
+    renderLineupControls();
     renderBulkPracticeControls();
     playerListArea.innerHTML = "";
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
@@ -915,8 +1042,7 @@
 
   if (!loadGame()) {
     generateInitialRoster();
-    processGraduationAndScout();
-    seasonEventMessage = "入学式が行われました。下のスカウト欄から新入部員を選びましょう。";
+    ensurePitcherExists();
   }
 
   renderCalendar();
