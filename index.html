@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>高校野球 選手育成シミュレーション</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Meiryo", sans-serif;
+    background: #f2f5f0;
+    margin: 0;
+    padding: 20px;
+    color: #222;
+  }
+  h1 {
+    font-size: 22px;
+    text-align: center;
+    color: #1a5d2b;
+  }
+  .card {
+    background: white;
+    border-radius: 10px;
+    padding: 16px 20px;
+    max-width: 480px;
+    margin: 16px auto;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+  label {
+    display: block;
+    margin-top: 10px;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  input[type="text"], select, input[type="number"] {
+    width: 100%;
+    padding: 6px;
+    margin-top: 4px;
+    box-sizing: border-box;
+    font-size: 14px;
+  }
+  button {
+    margin-top: 16px;
+    padding: 10px 16px;
+    background: #1a5d2b;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+    width: 100%;
+  }
+  button:disabled {
+    background: #aaa;
+    cursor: not-allowed;
+  }
+  .player {
+    border-left: 4px solid #1a5d2b;
+    padding: 8px 12px;
+    margin-top: 10px;
+    background: #f7faf6;
+    border-radius: 4px;
+  }
+  .player-name {
+    font-weight: bold;
+    font-size: 16px;
+  }
+  .player-pos {
+    display: inline-block;
+    font-size: 12px;
+    background: #1a5d2b;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+  }
+  .stat-line {
+    font-size: 13px;
+    margin-top: 4px;
+    color: #444;
+  }
+  .empty-note {
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>⚾ 高校野球 選手育成シミュレーション</h1>
+
+<div class="card">
+  <div id="form-area">
+    <label>選手の名前</label>
+    <input type="text" id="name-input" placeholder="例: 山田太郎">
+
+    <label>ポジション</label>
+    <select id="position-input">
+      <option value="pitcher">投手</option>
+      <option value="fielder">野手</option>
+    </select>
+
+    <div id="stat-inputs"></div>
+
+    <button id="add-button">この内容で選手を登録する</button>
+  </div>
+  <div id="full-note" class="empty-note" style="display:none;">
+    選手は3人まで登録できます。すでに3人登録済みです。
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:16px; margin-top:0;">登録した選手</h2>
+  <div id="player-list"></div>
+  <div id="empty-list-note" class="empty-note">まだ選手が登録されていません。</div>
+</div>
+
+<script>
+  const MAX_PLAYERS = 3;
+  const players = [];
+
+  const statDefs = {
+    pitcher: [
+      { key: "velocity", label: "球速" },
+      { key: "control", label: "コントロール" },
+      { key: "stamina", label: "スタミナ" },
+    ],
+    fielder: [
+      { key: "batting", label: "打力" },
+      { key: "running", label: "走力" },
+      { key: "fielding", label: "守備力" },
+    ],
+  };
+
+  const nameInput = document.getElementById("name-input");
+  const positionInput = document.getElementById("position-input");
+  const statInputsArea = document.getElementById("stat-inputs");
+  const addButton = document.getElementById("add-button");
+  const formArea = document.getElementById("form-area");
+  const fullNote = document.getElementById("full-note");
+  const playerListArea = document.getElementById("player-list");
+  const emptyListNote = document.getElementById("empty-list-note");
+
+  function renderStatInputs() {
+    const defs = statDefs[positionInput.value];
+    statInputsArea.innerHTML = "";
+    defs.forEach(def => {
+      const label = document.createElement("label");
+      label.textContent = `${def.label}(1〜100)`;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = "100";
+      input.value = "50";
+      input.id = `stat-${def.key}`;
+      statInputsArea.appendChild(label);
+      statInputsArea.appendChild(input);
+    });
+  }
+
+  function renderPlayerList() {
+    playerListArea.innerHTML = "";
+    emptyListNote.style.display = players.length === 0 ? "block" : "none";
+
+    players.forEach(player => {
+      const div = document.createElement("div");
+      div.className = "player";
+
+      const positionLabel = player.position === "pitcher" ? "投手" : "野手";
+      const statLine = statDefs[player.position]
+        .map(def => `${def.label}: ${player.stats[def.key]}`)
+        .join(" / ");
+
+      div.innerHTML = `
+        <span class="player-name">${player.name}</span>
+        <span class="player-pos">${positionLabel}</span>
+        <div class="stat-line">${statLine}</div>
+      `;
+      playerListArea.appendChild(div);
+    });
+  }
+
+  function updateFormAvailability() {
+    const full = players.length >= MAX_PLAYERS;
+    formArea.style.display = full ? "none" : "block";
+    fullNote.style.display = full ? "block" : "none";
+  }
+
+  addButton.addEventListener("click", () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      alert("選手の名前を入力してください。");
+      return;
+    }
+
+    const position = positionInput.value;
+    const defs = statDefs[position];
+    const stats = {};
+    defs.forEach(def => {
+      const value = Number(document.getElementById(`stat-${def.key}`).value);
+      stats[def.key] = Math.min(100, Math.max(1, value));
+    });
+
+    players.push({ name, position, stats });
+
+    nameInput.value = "";
+    renderPlayerList();
+    updateFormAvailability();
+  });
+
+  positionInput.addEventListener("change", renderStatInputs);
+
+  renderStatInputs();
+  renderPlayerList();
+  updateFormAvailability();
+</script>
+
+</body>
+</html>
