@@ -246,9 +246,10 @@
     gap: 6px;
     align-items: center;
     margin-top: 6px;
+    flex-wrap: wrap;
   }
   .lineup-row label {
-    flex: 0 0 36px;
+    flex: 0 0 70px;
     margin-top: 0;
     font-size: 12px;
     font-weight: bold;
@@ -256,6 +257,11 @@
   .lineup-row select {
     margin-top: 0;
     flex: 1;
+  }
+  .mismatch-badge {
+    flex: 0 0 100%;
+    font-size: 11px;
+    color: #b3261e;
   }
   .rival-row {
     display: flex;
@@ -712,12 +718,20 @@
       const usedElsewhere = lineup.order.filter((id, idx) => idx !== slot);
       const selectable = fielders.filter(p => !usedElsewhere.includes(p.id));
       const currentId = lineup.order[slot];
+      const expectedType = SLOT_POSITION_TYPES[slot];
       const optionsHtml = [`<option value="">-- 空き --</option>`]
-        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/${playerRankLabel(p)})</option>`))
+        .concat(selectable.map(p => {
+          const mismatchNote = p.position === expectedType ? "" : " ※適性外-15%";
+          return `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/${playerRankLabel(p)})${mismatchNote}</option>`;
+        }))
         .join("");
+      const currentPlayer = currentId ? players.find(p => p.id === currentId) : null;
+      const mismatchBadge = (currentPlayer && currentPlayer.position !== expectedType)
+        ? `<span class="mismatch-badge">適性外 -15%</span>`
+        : "";
       const row = document.createElement("div");
       row.className = "lineup-row";
-      row.innerHTML = `<label>${slot + 1}番</label><select class="lineup-order-select" data-slot="${slot}">${optionsHtml}</select>`;
+      row.innerHTML = `<label>${slot + 1}番(${positionLabels[expectedType]})</label><select class="lineup-order-select" data-slot="${slot}">${optionsHtml}</select>${mismatchBadge}`;
       lineupOrderArea.appendChild(row);
     }
   }
@@ -911,6 +925,14 @@
     return players.filter(p => ids.includes(p.id));
   }
 
+  // 打順の各枠に想定されている本来のポジション(1番:捕手、2〜5番:内野手、6〜8番:外野手という想定)
+  const SLOT_POSITION_TYPES = ["catcher", "infielder", "infielder", "infielder", "infielder", "outfielder", "outfielder", "outfielder"];
+
+  // 本来のポジションと違う選手をその枠で起用すると、試合では能力が少し低く発揮される(適性外)
+  function slotFitMultiplier(player, slotIndex) {
+    return player.position === SLOT_POSITION_TYPES[slotIndex] ? 1.0 : 0.85;
+  }
+
   // スタメンに入っている選手だけで試合の力を計算する(打順1〜5番は少し重みを大きくする)
   function totalLineupPower() {
     let sum = 0;
@@ -920,8 +942,8 @@
       if (!id) return;
       const p = players.find(pl => pl.id === id);
       if (!p) return;
-      const weight = idx < 5 ? 1.15 : 1.0;
-      sum += playerPowerSum(p) * weight;
+      const battingWeight = idx < 5 ? 1.15 : 1.0;
+      sum += playerPowerSum(p) * battingWeight * slotFitMultiplier(p, idx);
     });
     return sum;
   }
@@ -947,13 +969,20 @@
     while (lineup.order.length < 8) lineup.order.push(null);
 
     const usedIds = new Set([lineup.pitcherId, ...lineup.order].filter(Boolean));
-    const availableSorted = players
-      .filter(p => p.position !== "pitcher" && isFitToPlay(p) && !usedIds.has(p.id))
-      .sort((a, b) => playerPowerSum(b) - playerPowerSum(a));
+    const availableFielders = players.filter(p => p.position !== "pitcher" && isFitToPlay(p));
 
     for (let i = 0; i < 8; i++) {
-      if (!lineup.order[i] && availableSorted.length > 0) {
-        lineup.order[i] = availableSorted.shift().id;
+      if (lineup.order[i]) continue;
+      const expectedType = SLOT_POSITION_TYPES[i];
+      // 空いている枠は、まず本来のポジションに合う選手の中で一番強い人から探す(いなければ他の選手で代用)
+      let candidates = availableFielders.filter(p => p.position === expectedType && !usedIds.has(p.id));
+      if (candidates.length === 0) {
+        candidates = availableFielders.filter(p => !usedIds.has(p.id));
+      }
+      candidates.sort((a, b) => playerPowerSum(b) - playerPowerSum(a));
+      if (candidates[0]) {
+        lineup.order[i] = candidates[0].id;
+        usedIds.add(candidates[0].id);
       }
     }
   }
@@ -1134,10 +1163,6 @@
       alert("スタメンに投手がいません。「スタメン・打順」で先発投手を選んでください。");
       return;
     }
-    if (lineup.order.filter(Boolean).length < 8) {
-      alert("スタメンが9人そろっていません(投手+打順8人が必要です)。選手を増やすか「スタメン・打順」で打順を埋めてください。");
-      return;
-    }
     const windowT = findWindowTournament();
     if (!windowT || !isMatchAvailable(windowT)) return;
 
@@ -1206,8 +1231,7 @@
     autoFillLineup();
 
     const windowT = findWindowTournament();
-    const hasFullLineup = lineup.pitcherId && lineup.order.filter(Boolean).length >= 8;
-    if (!windowT && hasFullLineup && Math.random() < 0.25) {
+    if (!windowT && lineup.pitcherId && Math.random() < 0.25) {
       const result = runMatch();
       grantMatchExperience();
       practiceGameResult.innerHTML = buildMatchReportHtml("練習試合", result);
