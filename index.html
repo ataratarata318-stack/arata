@@ -285,7 +285,12 @@
   let seasonEventMessage = "";
 
   // 新入部員の自動生成に使う名前とポジションの候補
-  const sampleRecruitNames = ["佐藤健太", "鈴木大輔", "高橋翔", "田中蓮", "伊藤陸", "渡辺樹", "山本颯太", "中村悠斗", "小林大和", "加藤悠", "吉田颯", "斎藤諒"];
+  const sampleRecruitNames = [
+    "佐藤健太", "鈴木大輔", "高橋翔", "田中蓮", "伊藤陸", "渡辺樹", "山本颯太", "中村悠斗",
+    "小林大和", "加藤悠", "吉田颯", "斎藤諒", "山口大翔", "松本蒼", "井上駿", "木村陽翔",
+    "林拓海", "清水湊", "山崎大輝", "阿部樹", "森大地", "池田悠真", "橋本蒼太", "石川陽向",
+    "前田輝", "藤田航", "岡田悠斗", "長谷川大和", "村上蓮", "近藤陽太", "坂本翼", "遠藤翔太",
+  ];
   const allPositions = ["pitcher", "catcher", "infielder", "outfielder"];
 
   // チームの強さ・選手個人の強さを数字ではなく段階で表現する
@@ -344,11 +349,25 @@
   }
 
   function randomRecruitName() {
-    return sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
+    const activeNames = new Set(players.map(p => p.name));
+    const available = sampleRecruitNames.filter(n => !activeNames.has(n));
+    const pool = available.length > 0 ? available : sampleRecruitNames;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   function randomPosition() {
     return allPositions[Math.floor(Math.random() * allPositions.length)];
+  }
+
+  // 投手が0人にならないよう、必要なら直近の選手を投手として振り直す
+  function ensurePitcherExists() {
+    if (players.length === 0 || players.some(p => p.position === "pitcher")) return;
+    const target = players[players.length - 1];
+    target.position = "pitcher";
+    const { stats, talentLabel } = rollNewPlayerStats("pitcher");
+    target.stats = stats;
+    target.talentLabel = talentLabel;
+    target.selectedPracticeStatKey = practiceMenus.pitcher[0].statKey;
   }
 
   // ゲーム開始時、すでに2・3年生がいるチームを引き継いだ状態からスタートする
@@ -395,6 +414,8 @@
       players.push(createPlayer(name, randomPosition()));
       recruitedNames.push(name);
     }
+
+    ensurePitcherExists();
     return recruitedNames;
   }
 
@@ -707,6 +728,7 @@
   });
 
   const bulkPracticeArea = document.getElementById("bulk-practice-controls");
+  const bulkSelectionByPosition = {};
 
   function renderBulkPracticeControls() {
     bulkPracticeArea.innerHTML = "";
@@ -714,8 +736,9 @@
     if (positionsPresent.length === 0) return;
 
     positionsPresent.forEach(position => {
+      const currentChoice = bulkSelectionByPosition[position] || practiceMenus[position][0].statKey;
       const options = practiceMenus[position]
-        .map(menu => `<option value="${menu.statKey}">${menu.label}</option>`)
+        .map(menu => `<option value="${menu.statKey}" ${menu.statKey === currentChoice ? "selected" : ""}>${menu.label}</option>`)
         .join("");
       const row = document.createElement("div");
       row.className = "bulk-row";
@@ -728,11 +751,17 @@
     });
   }
 
+  bulkPracticeArea.addEventListener("change", (event) => {
+    if (!event.target.classList.contains("bulk-select")) return;
+    bulkSelectionByPosition[event.target.dataset.position] = event.target.value;
+  });
+
   bulkPracticeArea.addEventListener("click", (event) => {
     if (!event.target.classList.contains("bulk-apply-button")) return;
     const position = event.target.dataset.position;
     const select = bulkPracticeArea.querySelector(`.bulk-select[data-position="${position}"]`);
     const statKey = select.value;
+    bulkSelectionByPosition[position] = statKey;
     players.forEach(player => {
       if (player.position === position) player.selectedPracticeStatKey = statKey;
     });
