@@ -75,6 +75,40 @@
     color: #444;
     min-height: 18px;
   }
+  .match-outcome {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+  .match-outcome.win { color: #1a5d2b; }
+  .match-outcome.lose { color: #b3261e; }
+  .box-score-wrap {
+    overflow-x: auto;
+  }
+  .box-score {
+    margin: 0 auto;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .box-score th, .box-score td {
+    border: 1px solid #ccc;
+    padding: 3px 6px;
+    text-align: center;
+  }
+  .box-score th {
+    background: #eef3ec;
+  }
+  .commentary-lines {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #444;
+    text-align: left;
+  }
+  .match-power-line {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #777;
+  }
   .player {
     border-left: 4px solid #1a5d2b;
     padding: 8px 12px;
@@ -361,6 +395,11 @@
     return powerTierLabel(totalTeamPower() / players.length);
   }
 
+  function playerGradeLabel(player) {
+    const grade = schoolYear - player.enrollYear + 1;
+    return grade >= 4 ? "卒業" : `${grade}年生`;
+  }
+
   function playerPowerSum(player) {
     return Object.values(player.stats).reduce((s, v) => s + v, 0);
   }
@@ -545,7 +584,7 @@
   function renderLineupControls() {
     const pitchers = players.filter(p => p.position === "pitcher");
     lineupPitcherSelect.innerHTML = pitchers.length > 0
-      ? pitchers.map(p => `<option value="${p.id}" ${p.id === lineup.pitcherId ? "selected" : ""}>${p.name}(${playerRankLabel(p)})</option>`).join("")
+      ? pitchers.map(p => `<option value="${p.id}" ${p.id === lineup.pitcherId ? "selected" : ""}>${p.name}(${playerGradeLabel(p)}/${playerRankLabel(p)})</option>`).join("")
       : `<option value="">投手がいません</option>`;
 
     lineupOrderArea.innerHTML = "";
@@ -555,7 +594,7 @@
       const selectable = fielders.filter(p => !usedElsewhere.includes(p.id));
       const currentId = lineup.order[slot];
       const optionsHtml = [`<option value="">-- 空き --</option>`]
-        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerRankLabel(p)})</option>`))
+        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/${playerRankLabel(p)})</option>`))
         .join("");
       const row = document.createElement("div");
       row.className = "lineup-row";
@@ -771,6 +810,75 @@
     return { teamPower, opponentPower, isWin, teamTier, opponentTier };
   }
 
+  const INNING_COUNT = 9;
+
+  // 勝敗の結果と矛盾しないように、9イニング分の得点経過を作る
+  function generateBoxScore(isWin) {
+    const teamRuns = [];
+    const oppRuns = [];
+    for (let i = 0; i < INNING_COUNT; i++) {
+      teamRuns.push(Math.floor(Math.random() * 3)); // 0〜2点
+      oppRuns.push(Math.floor(Math.random() * 3));
+    }
+    let teamTotal = teamRuns.reduce((a, b) => a + b, 0);
+    let oppTotal = oppRuns.reduce((a, b) => a + b, 0);
+
+    // 勝敗と合っていなければ最終回で帳尻を合わせる
+    if (isWin && teamTotal <= oppTotal) {
+      teamRuns[INNING_COUNT - 1] += (oppTotal - teamTotal) + 1 + Math.floor(Math.random() * 2);
+    } else if (!isWin && oppTotal <= teamTotal) {
+      oppRuns[INNING_COUNT - 1] += (teamTotal - oppTotal) + 1 + Math.floor(Math.random() * 2);
+    }
+
+    teamTotal = teamRuns.reduce((a, b) => a + b, 0);
+    oppTotal = oppRuns.reduce((a, b) => a + b, 0);
+    return { teamRuns, oppRuns, teamTotal, oppTotal };
+  }
+
+  function buildCommentary(box, isWin) {
+    const lines = [];
+    const teamBestInning = box.teamRuns.indexOf(Math.max(...box.teamRuns));
+    if (box.teamRuns[teamBestInning] >= 2) {
+      lines.push(`${teamBestInning + 1}回、自チームが${box.teamRuns[teamBestInning]}点を奪う猛攻を見せた。`);
+    }
+    const oppBestInning = box.oppRuns.indexOf(Math.max(...box.oppRuns));
+    if (box.oppRuns[oppBestInning] >= 2) {
+      lines.push(`${oppBestInning + 1}回、相手に${box.oppRuns[oppBestInning]}点を奪われる場面もあった。`);
+    }
+
+    const diff = Math.abs(box.teamTotal - box.oppTotal);
+    if (diff <= 1) {
+      lines.push(isWin ? "最後まで分からない大接戦を制した!" : "僅差の勝負を落としてしまった…");
+    } else if (diff >= 5) {
+      lines.push(isWin ? "力の差を見せつける完勝だった。" : "力の差を見せつけられる完敗だった…");
+    } else {
+      lines.push(isWin ? "着実に得点を重ねて勝利した。" : "反撃及ばず敗れた。");
+    }
+    return lines;
+  }
+
+  function buildMatchReportHtml(label, result) {
+    const box = generateBoxScore(result.isWin);
+    const commentary = buildCommentary(box, result.isWin);
+    const inningHeaders = box.teamRuns.map((_, i) => `<th>${i + 1}</th>`).join("") + "<th>計</th>";
+    const teamRow = box.teamRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.teamTotal}</strong></td>`;
+    const oppRow = box.oppRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.oppTotal}</strong></td>`;
+    const outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北…";
+
+    return `
+      <div class="match-outcome ${result.isWin ? "win" : "lose"}">${label}: ${outcomeText}</div>
+      <div class="box-score-wrap">
+        <table class="box-score">
+          <tr><th></th>${inningHeaders}</tr>
+          <tr><th>自チーム</th>${teamRow}</tr>
+          <tr><th>相手</th>${oppRow}</tr>
+        </table>
+      </div>
+      <div class="commentary-lines">${commentary.map(line => `<div>${line}</div>`).join("")}</div>
+      <div class="match-power-line">自チーム: ${result.teamTier} / 相手: ${result.opponentTier}</div>
+    `;
+  }
+
   // 試合を経験することで、出場した(スタメンの)選手だけ能力が少しずつ伸びる
   function grantMatchExperience() {
     getStartingPlayers().forEach(player => {
@@ -858,11 +966,11 @@
     officialMatchPlayedThisWeek = true;
     grantMatchExperience();
 
-    let outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北...";
+    let reportLabel = `${windowT.name} ${label}`;
     if (result.isWin && state.champion) {
-      outcomeText += ` ${windowT.name}優勝!`;
+      reportLabel += `(優勝!)`;
     }
-    officialMatchResult.textContent = `${windowT.name} ${label}: ${outcomeText}(自チーム: ${result.teamTier} / 相手: ${result.opponentTier})`;
+    officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result);
 
     renderCalendar();
     renderPlayerList();
@@ -904,9 +1012,9 @@
     if (!windowT && players.length > 0 && lineup.pitcherId && Math.random() < 0.25) {
       const result = runMatch();
       grantMatchExperience();
-      practiceGameResult.textContent = `練習試合が行われました: ${result.isWin ? "勝利!" : "敗北..."}(自チーム: ${result.teamTier} / 相手: ${result.opponentTier})`;
+      practiceGameResult.innerHTML = buildMatchReportHtml("練習試合", result);
     } else {
-      practiceGameResult.textContent = "";
+      practiceGameResult.innerHTML = "";
     }
 
     renderCalendar();
@@ -930,8 +1038,7 @@
       div.className = "player";
 
       const positionLabel = positionLabels[player.position];
-      const grade = schoolYear - player.enrollYear + 1;
-      const gradeLabel = grade >= 4 ? "卒業" : `${grade}年生`;
+      const gradeLabel = playerGradeLabel(player);
 
       const statLine = statDefs[player.position]
         .map(def => `${def.label}: ${player.stats[def.key]}`)
