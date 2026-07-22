@@ -58,11 +58,21 @@
     font-weight: bold;
     color: #1a5d2b;
   }
-  .calendar-event {
+  .status-line {
     text-align: center;
     font-size: 13px;
     color: #555;
     margin-top: 6px;
+    min-height: 18px;
+  }
+  .official-match-button {
+    background: #b3261e;
+  }
+  #official-match-result, #practice-game-result {
+    margin-top: 12px;
+    font-size: 13px;
+    text-align: center;
+    color: #444;
     min-height: 18px;
   }
   .player {
@@ -102,35 +112,23 @@
     margin-top: 4px;
     color: #444;
   }
-  .practice-buttons {
+  .practice-row {
     display: flex;
-    flex-wrap: wrap;
     gap: 6px;
     margin-top: 8px;
+    align-items: stretch;
   }
-  .practice-button {
+  .practice-select {
+    margin-top: 0;
+    flex: 2;
+  }
+  .practice-execute-button {
     margin-top: 0;
     width: auto;
-    flex: 1 1 auto;
+    flex: 1;
     padding: 6px 10px;
     font-size: 12px;
     background: #3d7dd6;
-  }
-  #match-result {
-    margin-top: 14px;
-    font-size: 14px;
-  }
-  .match-outcome {
-    font-size: 20px;
-    font-weight: bold;
-    text-align: center;
-    margin-bottom: 8px;
-  }
-  .match-outcome.win { color: #1a5d2b; }
-  .match-outcome.lose { color: #b3261e; }
-  .match-power-line {
-    text-align: center;
-    color: #555;
   }
   .empty-note {
     text-align: center;
@@ -146,8 +144,11 @@
 
 <div class="card">
   <div class="calendar-line" id="calendar-line"></div>
-  <div class="calendar-event" id="calendar-event"></div>
-  <button id="next-month-button">次の月へ</button>
+  <div class="status-line" id="status-line"></div>
+  <button id="official-match-button" class="official-match-button" style="display:none;">公式戦を行う</button>
+  <div id="official-match-result"></div>
+  <button id="next-week-button">次の週へ</button>
+  <div id="practice-game-result"></div>
 </div>
 
 <div class="card">
@@ -174,12 +175,6 @@
   <h2 style="font-size:16px; margin-top:0;">登録した選手</h2>
   <div id="player-list"></div>
   <div id="empty-list-note" class="empty-note">まだ選手が登録されていません。</div>
-</div>
-
-<div class="card">
-  <h2 style="font-size:16px; margin-top:0;">試合</h2>
-  <button id="match-button">試合をする</button>
-  <div id="match-result"></div>
 </div>
 
 <script>
@@ -241,18 +236,26 @@
     ],
   };
 
-  // 4月始まりの1年間のカレンダー。indexは学年内の月の並び順(0=4月, 11=3月)
+  // 1ヶ月=4週間の簡易カレンダー。4月を0週目として48週で1年
+  const WEEKS_PER_MONTH = 4;
   const monthNames = ["4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月", "1月", "2月", "3月"];
-  const monthEvents = {
-    0: "入学式が行われました。新入生が入部してきます。",
-    3: "夏の大会に向けた地区予選が始まりました。",
-    4: "夏の大会が本番を迎えています。",
-    6: "新チームが始動。秋季大会が始まりました。",
-    11: "学年末です。来月から新学年になります。",
-  };
+  const TOTAL_WEEKS = monthNames.length * WEEKS_PER_MONTH;
+
+  // 公式戦の日程(週番号は0始まり)
+  const tournaments = [
+    { id: "spring", name: "春季大会", startWeek: 2, endWeek: 7, roundsToWin: 4 },
+    { id: "summer", name: "夏の大会(地方予選)", startWeek: 12, endWeek: 15, roundsToWin: 4 },
+    { id: "koshien", name: "甲子園(全国大会)", startWeek: 16, endWeek: 19, roundsToWin: 3, requiresChampion: "summer" },
+    { id: "fall", name: "秋季大会", startWeek: 24, endWeek: 27, roundsToWin: 4 },
+  ];
+  const tournamentState = {};
+  tournaments.forEach(t => {
+    tournamentState[t.id] = { currentRound: 0, eliminated: false, champion: false, resetYear: 0 };
+  });
 
   let schoolYear = 1;
-  let monthIndex = 0;
+  let weekIndex = 0;
+  let officialMatchPlayedThisWeek = false;
 
   function rollNewPlayerStats(position) {
     const defs = statDefs[position];
@@ -282,20 +285,147 @@
   const playerListArea = document.getElementById("player-list");
   const emptyListNote = document.getElementById("empty-list-note");
   const calendarLine = document.getElementById("calendar-line");
-  const calendarEvent = document.getElementById("calendar-event");
-  const nextMonthButton = document.getElementById("next-month-button");
+  const statusLine = document.getElementById("status-line");
+  const officialMatchButton = document.getElementById("official-match-button");
+  const officialMatchResult = document.getElementById("official-match-result");
+  const nextWeekButton = document.getElementById("next-week-button");
+  const practiceGameResult = document.getElementById("practice-game-result");
 
-  function renderCalendar() {
-    calendarLine.textContent = `${schoolYear}年目 ${monthNames[monthIndex]}`;
-    calendarEvent.textContent = monthEvents[monthIndex] || "";
+  function roundLabel(roundsToWin, roundNumber) {
+    const fromEnd = roundsToWin - roundNumber;
+    if (fromEnd === 0) return "決勝";
+    if (fromEnd === 1) return "準決勝";
+    return `${roundNumber}回戦`;
   }
 
-  nextMonthButton.addEventListener("click", () => {
-    monthIndex++;
-    if (monthIndex >= monthNames.length) {
-      monthIndex = 0;
+  function ensureTournamentReset(t) {
+    const state = tournamentState[t.id];
+    if (state.resetYear !== schoolYear && weekIndex >= t.startWeek) {
+      state.currentRound = 0;
+      state.eliminated = false;
+      state.champion = false;
+      state.resetYear = schoolYear;
+    }
+  }
+
+  function findWindowTournament() {
+    return tournaments.find(t => weekIndex >= t.startWeek && weekIndex <= t.endWeek);
+  }
+
+  function isMatchAvailable(t) {
+    if (!t) return false;
+    ensureTournamentReset(t);
+    const state = tournamentState[t.id];
+    if (state.eliminated || state.champion) return false;
+    if (officialMatchPlayedThisWeek) return false;
+    if (t.requiresChampion) {
+      const reqState = tournamentState[t.requiresChampion];
+      if (!reqState.champion || reqState.resetYear !== schoolYear) return false;
+    }
+    return true;
+  }
+
+  function totalTeamPower() {
+    return players.reduce((sum, player) => {
+      const statValues = Object.values(player.stats);
+      return sum + statValues.reduce((s, v) => s + v, 0);
+    }, 0);
+  }
+
+  function runMatch() {
+    const teamPower = totalTeamPower();
+    // 相手チームの強さは自チームの70%〜130%の範囲でランダムに決まる
+    const opponentPower = Math.round(teamPower * (0.7 + Math.random() * 0.6));
+    // 自チームが強いほど勝ちやすいが、多少の運の要素もある
+    const winProbability = teamPower / (teamPower + opponentPower);
+    const isWin = Math.random() < winProbability;
+    return { teamPower, opponentPower, isWin };
+  }
+
+  function renderCalendar() {
+    const monthIndex = Math.floor(weekIndex / WEEKS_PER_MONTH);
+    const weekInMonth = (weekIndex % WEEKS_PER_MONTH) + 1;
+    calendarLine.textContent = `${schoolYear}年目 ${monthNames[monthIndex]} 第${weekInMonth}週`;
+
+    const windowT = findWindowTournament();
+    if (windowT) {
+      ensureTournamentReset(windowT);
+      const state = tournamentState[windowT.id];
+      if (state.champion) {
+        statusLine.textContent = `${windowT.name}で優勝しました!`;
+      } else if (state.eliminated) {
+        statusLine.textContent = `${windowT.name}で敗退しました。`;
+      } else if (windowT.requiresChampion && !isMatchAvailable(windowT)) {
+        statusLine.textContent = `${windowT.name}の出場権はありません。`;
+      } else {
+        statusLine.textContent = `${windowT.name} ${roundLabel(windowT.roundsToWin, state.currentRound + 1)}の期間です。`;
+      }
+    } else if (weekIndex === 0) {
+      statusLine.textContent = "入学式が行われました。新入生を迎え入れましょう。";
+    } else if (weekIndex === TOTAL_WEEKS - 1) {
+      statusLine.textContent = "学年末です。来週から新学年になります。";
+    } else {
+      statusLine.textContent = "オフシーズンです。練習に励みましょう。";
+    }
+
+    if (windowT && isMatchAvailable(windowT)) {
+      const state = tournamentState[windowT.id];
+      officialMatchButton.style.display = "block";
+      officialMatchButton.textContent = `公式戦: ${windowT.name} ${roundLabel(windowT.roundsToWin, state.currentRound + 1)}を行う`;
+    } else {
+      officialMatchButton.style.display = "none";
+    }
+  }
+
+  officialMatchButton.addEventListener("click", () => {
+    if (players.length === 0) {
+      alert("試合をする前に選手を登録してください。");
+      return;
+    }
+    const windowT = findWindowTournament();
+    if (!windowT || !isMatchAvailable(windowT)) return;
+
+    const state = tournamentState[windowT.id];
+    const label = roundLabel(windowT.roundsToWin, state.currentRound + 1);
+    const result = runMatch();
+
+    if (result.isWin) {
+      state.currentRound++;
+      if (state.currentRound >= windowT.roundsToWin) {
+        state.champion = true;
+      }
+    } else {
+      state.eliminated = true;
+    }
+    officialMatchPlayedThisWeek = true;
+
+    let outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北...";
+    if (result.isWin && state.champion) {
+      outcomeText += ` ${windowT.name}優勝!`;
+    }
+    officialMatchResult.textContent = `${windowT.name} ${label}: ${outcomeText}(自チーム${result.teamPower} / 相手${result.opponentPower})`;
+
+    renderCalendar();
+  });
+
+  nextWeekButton.addEventListener("click", () => {
+    weekIndex++;
+    if (weekIndex >= TOTAL_WEEKS) {
+      weekIndex = 0;
       schoolYear++;
     }
+    officialMatchPlayedThisWeek = false;
+    officialMatchResult.textContent = "";
+    players.forEach(p => { p.practicedThisWeek = false; });
+
+    const windowT = findWindowTournament();
+    if (!windowT && players.length > 0 && Math.random() < 0.25) {
+      const result = runMatch();
+      practiceGameResult.textContent = `練習試合が行われました: ${result.isWin ? "勝利!" : "敗北..."}(自チーム${result.teamPower} / 相手${result.opponentPower})`;
+    } else {
+      practiceGameResult.textContent = "";
+    }
+
     renderCalendar();
     renderPlayerList();
   });
@@ -320,9 +450,12 @@
         ? `<span class="talent-badge">★ ${player.talentLabel}の才能</span>`
         : "";
 
-      const practiceButtons = practiceMenus[player.position]
-        .map(menu => `<button class="practice-button" data-index="${index}" data-stat="${menu.statKey}">${menu.label}</button>`)
+      const menuOptions = practiceMenus[player.position]
+        .map(menu => `<option value="${menu.statKey}">${menu.label}</option>`)
         .join("");
+
+      const buttonLabel = player.practicedThisWeek ? "今週は練習済み" : "この内容で練習する";
+      const buttonDisabled = player.practicedThisWeek ? "disabled" : "";
 
       div.innerHTML = `
         <span class="player-name">${player.name}</span>
@@ -330,7 +463,10 @@
         <span class="player-grade">${gradeLabel}</span>
         ${talentBadge}
         <div class="stat-line">${statLine}</div>
-        <div class="practice-buttons">${practiceButtons}</div>
+        <div class="practice-row">
+          <select class="practice-select" data-index="${index}" ${buttonDisabled}>${menuOptions}</select>
+          <button class="practice-execute-button" data-index="${index}" ${buttonDisabled}>${buttonLabel}</button>
+        </div>
       `;
       playerListArea.appendChild(div);
     });
@@ -338,8 +474,10 @@
 
   function practicePlayer(index, statKey) {
     const player = players[index];
+    if (player.practicedThisWeek) return;
     const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
     player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
+    player.practicedThisWeek = true;
     renderPlayerList();
   }
 
@@ -359,48 +497,18 @@
     const position = positionInput.value;
     const { stats, talentLabel } = rollNewPlayerStats(position);
 
-    players.push({ name, position, stats, talentLabel, enrollYear: schoolYear });
+    players.push({ name, position, stats, talentLabel, enrollYear: schoolYear, practicedThisWeek: false });
 
     nameInput.value = "";
     renderPlayerList();
     updateFormAvailability();
   });
 
-  const matchButton = document.getElementById("match-button");
-  const matchResultArea = document.getElementById("match-result");
-
-  function totalTeamPower() {
-    return players.reduce((sum, player) => {
-      const statValues = Object.values(player.stats);
-      return sum + statValues.reduce((s, v) => s + v, 0);
-    }, 0);
-  }
-
-  matchButton.addEventListener("click", () => {
-    if (players.length === 0) {
-      alert("試合をする前に選手を登録してください。");
-      return;
-    }
-
-    const teamPower = totalTeamPower();
-    // 相手チームの強さは自チームの70%〜130%の範囲でランダムに決まる
-    const opponentPower = Math.round(teamPower * (0.7 + Math.random() * 0.6));
-
-    // 自チームが強いほど勝ちやすいが、多少の運の要素もある
-    const winProbability = teamPower / (teamPower + opponentPower);
-    const isWin = Math.random() < winProbability;
-
-    matchResultArea.innerHTML = `
-      <div class="match-outcome ${isWin ? "win" : "lose"}">${isWin ? "🎉 勝利!" : "😢 敗北..."}</div>
-      <div class="match-power-line">自チームの総合力: ${teamPower} / 相手チームの総合力: ${opponentPower}</div>
-    `;
-  });
-
   playerListArea.addEventListener("click", (event) => {
-    if (event.target.classList.contains("practice-button")) {
+    if (event.target.classList.contains("practice-execute-button")) {
       const index = Number(event.target.dataset.index);
-      const statKey = event.target.dataset.stat;
-      practicePlayer(index, statKey);
+      const select = playerListArea.querySelector(`.practice-select[data-index="${index}"]`);
+      practicePlayer(index, select.value);
     }
   });
 
