@@ -82,6 +82,11 @@
   }
   .match-outcome.win { color: #1a5d2b; }
   .match-outcome.lose { color: #b3261e; }
+  .opponent-line {
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 8px;
+  }
   .box-score-wrap {
     overflow-x: auto;
   }
@@ -235,6 +240,21 @@
     margin-top: 0;
     flex: 1;
   }
+  .rival-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    padding: 4px 0;
+    border-bottom: 1px solid #eee;
+  }
+  .rival-row .rival-name {
+    font-weight: bold;
+  }
+  .rival-row .rival-trait {
+    color: #888;
+    font-size: 11px;
+    display: block;
+  }
 </style>
 </head>
 <body>
@@ -275,6 +295,12 @@
   <div id="bulk-practice-controls"></div>
   <div id="player-list"></div>
   <div id="empty-list-note" class="empty-note">まだ選手が登録されていません。</div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:16px; margin-top:0;">ライバル校との対戦成績</h2>
+  <div id="rivals-list"></div>
+  <div id="rivals-empty-note" class="empty-note">まだ対戦記録がありません。</div>
 </div>
 
 <script>
@@ -372,6 +398,31 @@
     "前田輝", "藤田航", "岡田悠斗", "長谷川大和", "村上蓮", "近藤陽太", "坂本翼", "遠藤翔太",
   ];
   const allPositions = ["pitcher", "catcher", "infielder", "outfielder"];
+
+  // ライバル校: 対戦相手に個性を持たせる
+  const RIVAL_SCHOOLS = [
+    { name: "青葉学院", trait: "強打を誇る強豪" },
+    { name: "北陵高校", trait: "堅い守備が持ち味" },
+    { name: "臨海工業", trait: "俊足を活かした機動力野球" },
+    { name: "旭丘高校", trait: "エースの好投が光る" },
+    { name: "緑ヶ丘学園", trait: "粘り強い攻撃が身上" },
+    { name: "港南商業", trait: "一発長打が魅力" },
+    { name: "白鷺高校", trait: "堅実なチームプレー" },
+    { name: "桜台高校", trait: "勢いのある若いチーム" },
+    { name: "常盤大学附属", trait: "伝統ある名門校" },
+    { name: "海浜学院", trait: "波に乗ると止まらない" },
+  ];
+  const rivalRecords = {};
+
+  function pickRivalSchool() {
+    return RIVAL_SCHOOLS[Math.floor(Math.random() * RIVAL_SCHOOLS.length)];
+  }
+
+  function recordRivalResult(schoolName, isWin) {
+    if (!rivalRecords[schoolName]) rivalRecords[schoolName] = { wins: 0, losses: 0 };
+    if (isWin) rivalRecords[schoolName].wins++;
+    else rivalRecords[schoolName].losses++;
+  }
 
   // チームの強さ・選手個人の強さを数字ではなく段階で表現する
   const POWER_TIERS = [
@@ -580,6 +631,26 @@
   const resetButton = document.getElementById("reset-button");
   const lineupPitcherSelect = document.getElementById("lineup-pitcher-select");
   const lineupOrderArea = document.getElementById("lineup-order-area");
+  const rivalsListArea = document.getElementById("rivals-list");
+  const rivalsEmptyNote = document.getElementById("rivals-empty-note");
+
+  function renderRivalRecords() {
+    const entries = Object.entries(rivalRecords).filter(([, r]) => r.wins + r.losses > 0);
+    rivalsEmptyNote.style.display = entries.length === 0 ? "block" : "none";
+    rivalsListArea.innerHTML = entries
+      .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+      .map(([name, r]) => {
+        const school = RIVAL_SCHOOLS.find(s => s.name === name);
+        const trait = school ? school.trait : "";
+        return `
+          <div class="rival-row">
+            <span><span class="rival-name">${name}</span><span class="rival-trait">${trait}</span></span>
+            <span>${r.wins}勝${r.losses}敗</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
 
   function renderLineupControls() {
     const pitchers = players.filter(p => p.position === "pitcher");
@@ -667,6 +738,7 @@
       playerIdCounter,
       lineup,
       bulkSelectionByPosition,
+      rivalRecords,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(state));
@@ -696,6 +768,7 @@
       playerIdCounter = state.playerIdCounter || 0;
       lineup = state.lineup || { pitcherId: null, order: [null, null, null, null, null, null, null, null] };
       Object.assign(bulkSelectionByPosition, state.bulkSelectionByPosition || {});
+      Object.assign(rivalRecords, state.rivalRecords || {});
       return true;
     } catch (e) {
       return false;
@@ -807,7 +880,9 @@
     const count = starters.length || 1;
     const teamTier = powerTierLabel(teamPower / count);
     const opponentTier = powerTierLabel(opponentPower / count);
-    return { teamPower, opponentPower, isWin, teamTier, opponentTier };
+    const opponentSchool = pickRivalSchool();
+    recordRivalResult(opponentSchool.name, isWin);
+    return { teamPower, opponentPower, isWin, teamTier, opponentTier, opponentSchool };
   }
 
   const INNING_COUNT = 9;
@@ -835,7 +910,7 @@
     return { teamRuns, oppRuns, teamTotal, oppTotal };
   }
 
-  function buildCommentary(box, isWin) {
+  function buildCommentary(box, isWin, opponentName) {
     const lines = [];
     const teamBestInning = box.teamRuns.indexOf(Math.max(...box.teamRuns));
     if (box.teamRuns[teamBestInning] >= 2) {
@@ -843,7 +918,7 @@
     }
     const oppBestInning = box.oppRuns.indexOf(Math.max(...box.oppRuns));
     if (box.oppRuns[oppBestInning] >= 2) {
-      lines.push(`${oppBestInning + 1}回、相手に${box.oppRuns[oppBestInning]}点を奪われる場面もあった。`);
+      lines.push(`${oppBestInning + 1}回、${opponentName}に${box.oppRuns[oppBestInning]}点を奪われる場面もあった。`);
     }
 
     const diff = Math.abs(box.teamTotal - box.oppTotal);
@@ -859,23 +934,26 @@
 
   function buildMatchReportHtml(label, result) {
     const box = generateBoxScore(result.isWin);
-    const commentary = buildCommentary(box, result.isWin);
+    const school = result.opponentSchool;
+    const commentary = buildCommentary(box, result.isWin, school.name);
     const inningHeaders = box.teamRuns.map((_, i) => `<th>${i + 1}</th>`).join("") + "<th>計</th>";
     const teamRow = box.teamRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.teamTotal}</strong></td>`;
     const oppRow = box.oppRuns.map(r => `<td>${r}</td>`).join("") + `<td><strong>${box.oppTotal}</strong></td>`;
     const outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北…";
+    const record = rivalRecords[school.name] || { wins: 0, losses: 0 };
 
     return `
       <div class="match-outcome ${result.isWin ? "win" : "lose"}">${label}: ${outcomeText}</div>
+      <div class="opponent-line">対戦校: ${school.name}(${school.trait})</div>
       <div class="box-score-wrap">
         <table class="box-score">
           <tr><th></th>${inningHeaders}</tr>
           <tr><th>自チーム</th>${teamRow}</tr>
-          <tr><th>相手</th>${oppRow}</tr>
+          <tr><th>${school.name}</th>${oppRow}</tr>
         </table>
       </div>
       <div class="commentary-lines">${commentary.map(line => `<div>${line}</div>`).join("")}</div>
-      <div class="match-power-line">自チーム: ${result.teamTier} / 相手: ${result.opponentTier}</div>
+      <div class="match-power-line">自チーム: ${result.teamTier} / ${school.name}: ${result.opponentTier}(通算 ${record.wins}勝${record.losses}敗)</div>
     `;
   }
 
@@ -1026,6 +1104,7 @@
     autoFillLineup();
     renderLineupControls();
     renderBulkPracticeControls();
+    renderRivalRecords();
     playerListArea.innerHTML = "";
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
     teamPowerLine.textContent = players.length > 0 ? `チームの実力: ${currentTeamTierLabel()}` : "";
