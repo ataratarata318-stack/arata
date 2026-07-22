@@ -107,11 +107,18 @@
     border-radius: 10px;
     margin-left: 6px;
   }
-  .player-tier-line {
-    font-size: 13px;
-    margin-top: 4px;
-    color: #b8860b;
+  .rank-badge {
+    display: inline-block;
+    font-size: 12px;
     font-weight: bold;
+    background: #b8860b;
+    color: white;
+    width: 20px;
+    height: 20px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 50%;
+    margin-left: 6px;
   }
   .stat-line {
     font-size: 13px;
@@ -337,11 +344,9 @@
     { max: Infinity, label: "S" },
   ];
 
-  function playerTierDisplay(player) {
+  function playerRankLabel(player) {
     const sum = playerPowerSum(player);
-    const index = PLAYER_RANKS.findIndex(rank => sum <= rank.max);
-    const stars = "★".repeat(index + 1) + "☆".repeat(PLAYER_RANKS.length - 1 - index);
-    return `ランク ${PLAYER_RANKS[index].label} ${stars}`;
+    return PLAYER_RANKS.find(rank => sum <= rank.max).label;
   }
 
   function createPlayer(name, position) {
@@ -520,13 +525,8 @@
   }
 
   function canAdvanceWeek() {
-    if (players.length === 0) return true;
-    if (isMatchPendingThisWeek()) {
-      // 今週の公式戦がまだ残っていれば次の週へ進めない
-      return false;
-    }
-    // 公式戦がない週(敗退・優勝後や大会期間外)は全選手が練習を終えるまで次の週へ進めない
-    return players.every(p => p.practicedThisWeek);
+    // 今週の公式戦がまだ残っていれば次の週へ進めない(練習は必須にしない)
+    return !isMatchPendingThisWeek();
   }
 
   function updateNextWeekButtonState() {
@@ -569,6 +569,11 @@
   nextWeekButton.addEventListener("click", () => {
     if (!canAdvanceWeek()) return;
 
+    // まだ今週の練習を実行していない選手には、選んでいる練習メニューを自動で適用してから週を進める
+    players.forEach(p => {
+      if (!p.practicedThisWeek) applyPracticeGain(p, p.selectedPracticeStatKey);
+    });
+
     weekIndex++;
     seasonEventMessage = "";
     if (weekIndex >= TOTAL_WEEKS) {
@@ -579,6 +584,7 @@
         seasonEventMessage = `入学式が行われました。新入部員が入部しました: ${recruitedNames.join("、")}`;
       }
     }
+
     officialMatchPlayedThisWeek = false;
     officialMatchResult.textContent = "";
     players.forEach(p => { p.practicedThisWeek = false; });
@@ -636,8 +642,8 @@
         <span class="player-name">${player.name}</span>
         <span class="player-pos">${positionLabel}</span>
         <span class="player-grade">${gradeLabel}</span>
+        <span class="rank-badge">${playerRankLabel(player)}</span>
         ${talentBadge}
-        <div class="player-tier-line">${playerTierDisplay(player)}</div>
         <div class="stat-line">${statLine}</div>
         <div class="practice-row">
           <select class="practice-select" data-index="${index}" ${buttonDisabled}>${menuOptions}</select>
@@ -650,12 +656,16 @@
     updateNextWeekButtonState();
   }
 
+  function applyPracticeGain(player, statKey) {
+    const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
+    player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
+  }
+
   function practicePlayer(index, statKey) {
     const player = players[index];
     if (player.practicedThisWeek || isMatchPendingThisWeek()) return;
     player.selectedPracticeStatKey = statKey;
-    const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
-    player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
+    applyPracticeGain(player, statKey);
     player.practicedThisWeek = true;
     renderPlayerList();
   }
@@ -713,7 +723,7 @@
       row.innerHTML = `
         <span class="bulk-label">${positionLabels[position]}</span>
         <select class="bulk-select" data-position="${position}">${options}</select>
-        <button class="bulk-apply-button" data-position="${position}">この位置の全員に反映</button>
+        <button class="bulk-apply-button" data-position="${position}">全員に反映</button>
       `;
       bulkPracticeArea.appendChild(row);
     });
