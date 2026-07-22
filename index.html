@@ -107,6 +107,12 @@
     border-radius: 10px;
     margin-left: 6px;
   }
+  .player-tier-line {
+    font-size: 13px;
+    margin-top: 4px;
+    color: #b8860b;
+    font-weight: bold;
+  }
   .stat-line {
     font-size: 13px;
     margin-top: 4px;
@@ -173,9 +179,7 @@
 
     <button id="add-button">この内容で入部させる</button>
   </div>
-  <div id="full-note" class="empty-note" style="display:none;">
-    選手は3人まで登録できます。すでに3人登録済みです。
-  </div>
+  <div id="full-note" class="empty-note" style="display:none;"></div>
 </div>
 
 <div class="card">
@@ -187,7 +191,8 @@
 </div>
 
 <script>
-  const MAX_PLAYERS = 3;
+  const MAX_PLAYERS = 9;
+  const RECRUITS_PER_YEAR = 3;
   const players = [];
 
   const positionLabels = {
@@ -271,21 +276,36 @@
   const sampleRecruitNames = ["佐藤健太", "鈴木大輔", "高橋翔", "田中蓮", "伊藤陸", "渡辺樹", "山本颯太", "中村悠斗", "小林大和", "加藤悠", "吉田颯", "斎藤諒"];
   const allPositions = ["pitcher", "catcher", "infielder", "outfielder"];
 
-  // チームの強さを数字ではなく段階で表現する
+  // チームの強さ・選手個人の強さを数字ではなく段階で表現する
   const POWER_TIERS = [
-    { max: 149, label: "弱小" },
-    { max: 249, label: "中堅" },
-    { max: 349, label: "強豪" },
+    { max: 99, label: "弱小" },
+    { max: 179, label: "普通" },
+    { max: 259, label: "中堅" },
+    { max: 339, label: "強豪" },
     { max: Infinity, label: "甲子園常連校" },
   ];
 
+  function powerTierIndex(averagePower) {
+    return POWER_TIERS.findIndex(tier => averagePower <= tier.max);
+  }
+
   function powerTierLabel(averagePower) {
-    return POWER_TIERS.find(tier => averagePower <= tier.max).label;
+    return POWER_TIERS[powerTierIndex(averagePower)].label;
   }
 
   function currentTeamTierLabel() {
     if (players.length === 0) return "選手なし";
     return powerTierLabel(totalTeamPower() / players.length);
+  }
+
+  function playerPowerSum(player) {
+    return Object.values(player.stats).reduce((s, v) => s + v, 0);
+  }
+
+  function playerTierDisplay(player) {
+    const index = powerTierIndex(playerPowerSum(player));
+    const stars = "★".repeat(index + 1) + "☆".repeat(POWER_TIERS.length - 1 - index);
+    return `${POWER_TIERS[index].label} ${stars}`;
   }
 
   function graduateAndRecruit() {
@@ -295,8 +315,11 @@
       if (grade > 3) players.splice(i, 1);
     }
 
+    // 卒業の有無にかかわらず、毎年春に新入部員が入ってくる(定員の空きがある分だけ)
     const recruitedNames = [];
-    while (players.length < MAX_PLAYERS) {
+    const openSlots = MAX_PLAYERS - players.length;
+    const recruitCount = Math.min(RECRUITS_PER_YEAR, openSlots);
+    for (let i = 0; i < recruitCount; i++) {
       const name = sampleRecruitNames[Math.floor(Math.random() * sampleRecruitNames.length)];
       const position = allPositions[Math.floor(Math.random() * allPositions.length)];
       const { stats, talentLabel } = rollNewPlayerStats(position);
@@ -396,6 +419,21 @@
     return { teamPower, opponentPower, isWin, teamTier, opponentTier };
   }
 
+  // 試合を経験することで、参加した選手の能力が少しずつ伸びる
+  function grantMatchExperience() {
+    players.forEach(player => {
+      const defs = statDefs[player.position];
+      const def = defs[Math.floor(Math.random() * defs.length)];
+      const gain = 1 + Math.floor(Math.random() * 2); // 1〜2ポイント上がる
+      player.stats[def.key] = Math.min(100, player.stats[def.key] + gain);
+    });
+  }
+
+  function isMatchPendingThisWeek() {
+    const windowT = findWindowTournament();
+    return !!windowT && isMatchAvailable(windowT);
+  }
+
   function renderCalendar() {
     const monthIndex = Math.floor(weekIndex / WEEKS_PER_MONTH);
     const weekInMonth = (weekIndex % WEEKS_PER_MONTH) + 1;
@@ -435,12 +473,11 @@
 
   function canAdvanceWeek() {
     if (players.length === 0) return true;
-    const windowT = findWindowTournament();
-    if (windowT) {
-      // 大会期間中は、その週の公式戦がまだ残っていれば次の週へ進めない
-      return !isMatchAvailable(windowT);
+    if (isMatchPendingThisWeek()) {
+      // 今週の公式戦がまだ残っていれば次の週へ進めない
+      return false;
     }
-    // オフシーズンは全選手が練習を終えるまで次の週へ進めない
+    // 公式戦がない週(敗退・優勝後や大会期間外)は全選手が練習を終えるまで次の週へ進めない
     return players.every(p => p.practicedThisWeek);
   }
 
@@ -469,6 +506,7 @@
       state.eliminated = true;
     }
     officialMatchPlayedThisWeek = true;
+    grantMatchExperience();
 
     let outcomeText = result.isWin ? "🎉 勝利!" : "😢 敗北...";
     if (result.isWin && state.champion) {
@@ -477,6 +515,7 @@
     officialMatchResult.textContent = `${windowT.name} ${label}: ${outcomeText}(自チーム: ${result.teamTier} / 相手: ${result.opponentTier})`;
 
     renderCalendar();
+    renderPlayerList();
   });
 
   nextWeekButton.addEventListener("click", () => {
@@ -499,6 +538,7 @@
     const windowT = findWindowTournament();
     if (!windowT && players.length > 0 && Math.random() < 0.25) {
       const result = runMatch();
+      grantMatchExperience();
       practiceGameResult.textContent = `練習試合が行われました: ${result.isWin ? "勝利!" : "敗北..."}(自チーム: ${result.teamTier} / 相手: ${result.opponentTier})`;
     } else {
       practiceGameResult.textContent = "";
@@ -514,8 +554,8 @@
     emptyListNote.style.display = players.length === 0 ? "block" : "none";
     teamPowerLine.textContent = players.length > 0 ? `チームの実力: ${currentTeamTierLabel()}` : "";
 
-    const tournamentWeek = !!findWindowTournament();
-    tournamentWeekNote.style.display = (tournamentWeek && players.length > 0) ? "block" : "none";
+    const matchPending = isMatchPendingThisWeek();
+    tournamentWeekNote.style.display = (matchPending && players.length > 0) ? "block" : "none";
 
     players.forEach((player, index) => {
       const div = document.createElement("div");
@@ -537,10 +577,10 @@
         .map(menu => `<option value="${menu.statKey}">${menu.label}</option>`)
         .join("");
 
-      const disablePractice = tournamentWeek || player.practicedThisWeek;
+      const disablePractice = matchPending || player.practicedThisWeek;
       const buttonDisabled = disablePractice ? "disabled" : "";
       let buttonLabel = "この内容で練習する";
-      if (tournamentWeek) buttonLabel = "大会期間中は練習できません";
+      if (matchPending) buttonLabel = "今週は公式戦のため練習できません";
       else if (player.practicedThisWeek) buttonLabel = "今週は練習済み";
 
       div.innerHTML = `
@@ -548,6 +588,7 @@
         <span class="player-pos">${positionLabel}</span>
         <span class="player-grade">${gradeLabel}</span>
         ${talentBadge}
+        <div class="player-tier-line">${playerTierDisplay(player)}</div>
         <div class="stat-line">${statLine}</div>
         <div class="practice-row">
           <select class="practice-select" data-index="${index}" ${buttonDisabled}>${menuOptions}</select>
@@ -562,7 +603,7 @@
 
   function practicePlayer(index, statKey) {
     const player = players[index];
-    if (player.practicedThisWeek || findWindowTournament()) return;
+    if (player.practicedThisWeek || isMatchPendingThisWeek()) return;
     const gain = 2 + Math.floor(Math.random() * 3); // 2〜4ポイント上がる
     player.stats[statKey] = Math.min(100, player.stats[statKey] + gain);
     player.practicedThisWeek = true;
@@ -573,6 +614,7 @@
     const full = players.length >= MAX_PLAYERS;
     formArea.style.display = full ? "none" : "block";
     fullNote.style.display = full ? "block" : "none";
+    fullNote.textContent = `選手は${MAX_PLAYERS}人まで登録できます。すでに${MAX_PLAYERS}人登録済みです。`;
   }
 
   addButton.addEventListener("click", () => {
