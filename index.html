@@ -2,26 +2,36 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a5d2b">
 <title>高校野球 選手育成シミュレーション</title>
 <style>
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
     font-family: "Hiragino Sans", "Meiryo", sans-serif;
     background: #f2f5f0;
     margin: 0;
-    padding: 20px;
+    padding: 12px;
     color: #222;
+    overflow-x: hidden;
   }
   h1 {
-    font-size: 22px;
+    font-size: 20px;
     text-align: center;
     color: #1a5d2b;
+    margin: 8px 0 12px;
   }
   .card {
     background: white;
-    border-radius: 10px;
-    padding: 16px 20px;
+    border-radius: 12px;
+    padding: 14px 16px;
     max-width: 480px;
-    margin: 16px auto;
+    margin: 12px auto;
     box-shadow: 0 2px 6px rgba(0,0,0,0.1);
   }
   label {
@@ -32,21 +42,23 @@
   }
   input[type="text"], select {
     width: 100%;
-    padding: 6px;
+    padding: 10px 8px;
     margin-top: 4px;
     box-sizing: border-box;
-    font-size: 14px;
+    font-size: 16px;
+    min-height: 44px;
   }
   button {
     margin-top: 16px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     background: #1a5d2b;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 15px;
     cursor: pointer;
     width: 100%;
+    min-height: 44px;
   }
   button:disabled {
     background: #aaa;
@@ -112,21 +124,23 @@
     margin-top: 8px;
   }
   #tactics-prompt {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: bold;
     text-align: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    line-height: 1.5;
   }
   #tactics-options {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
   .tactics-button {
     margin-top: 0;
     flex: 1 1 45%;
-    padding: 8px 6px;
-    font-size: 12px;
+    padding: 10px 6px;
+    font-size: 13px;
+    min-height: 44px;
     background: #3d7dd6;
   }
   .box-score-wrap {
@@ -241,20 +255,22 @@
   }
   .practice-row {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     margin-top: 8px;
     align-items: stretch;
+    flex-wrap: wrap;
   }
   .practice-select {
     margin-top: 0;
-    flex: 2;
+    flex: 2 1 140px;
   }
   .practice-execute-button {
     margin-top: 0;
     width: auto;
-    flex: 1;
-    padding: 6px 10px;
-    font-size: 12px;
+    flex: 1 1 90px;
+    padding: 10px 12px;
+    font-size: 13px;
+    min-height: 44px;
     background: #3d7dd6;
   }
   .empty-note {
@@ -272,53 +288,53 @@
   }
   .bulk-row {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     align-items: center;
-    margin-top: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
   }
   .bulk-label {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: bold;
     flex: 0 0 44px;
   }
   .bulk-select {
     margin-top: 0;
-    flex: 2;
+    flex: 1 1 140px;
   }
   .bulk-apply-button {
     margin-top: 0;
     width: auto;
-    flex: 2;
-    padding: 6px 8px;
-    font-size: 12px;
+    flex: 1 1 100%;
+    padding: 10px 12px;
+    font-size: 13px;
+    min-height: 44px;
     background: #6a4fb3;
   }
   .scout-recruit-button {
     margin-top: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    min-height: 44px;
     background: #1a5d2b;
   }
   .lineup-row {
     display: flex;
-    gap: 6px;
-    align-items: center;
-    margin-top: 6px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 10px;
   }
   .lineup-row label {
-    flex: 0 0 70px;
     margin-top: 0;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: bold;
   }
   .lineup-row select {
     margin-top: 0;
-    flex: 1;
+    width: 100%;
   }
   .mismatch-badge {
-    flex: 0 0 100%;
-    font-size: 11px;
+    font-size: 12px;
     color: #b3261e;
   }
   .rival-row {
@@ -355,11 +371,11 @@
 
 <h1>⚾ 高校野球 選手育成シミュレーション</h1>
 
-<div style="text-align:center; max-width:480px; margin:0 auto; display:flex; flex-wrap:wrap; gap:6px; justify-content:center;">
-  <button id="export-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#3d7dd6;">セーブデータを書き出す</button>
-  <button id="import-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#3d7dd6;">セーブデータを読み込む</button>
+<div style="text-align:center; max-width:480px; margin:0 auto; display:flex; flex-wrap:wrap; gap:8px; justify-content:center;">
+  <button id="export-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#3d7dd6;">セーブデータを書き出す</button>
+  <button id="import-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#3d7dd6;">セーブデータを読み込む</button>
   <input type="file" id="import-file-input" accept="application/json" style="display:none;">
-  <button id="reset-button" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px; background:#b3261e;">データをリセットして最初から</button>
+  <button id="reset-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#b3261e;">データをリセットして最初から</button>
 </div>
 
 <div class="card">
@@ -586,7 +602,7 @@
 
   function playerGradeLabel(player) {
     const grade = schoolYear - player.enrollYear + 1;
-    return grade >= 4 ? "卒業" : `${grade}年生`;
+    return grade >= 4 ? "卒業" : `${grade}年`;
   }
 
   function playerPowerSum(player) {
@@ -976,8 +992,7 @@
       const selectable = fielders.filter(p => !usedElsewhere.includes(p.id));
       const optionsHtml = [`<option value="">-- 空き --</option>`]
         .concat(selectable.map(p => {
-          const mismatchNote = p.position === slot.role ? "" : " ※適性外-15%";
-          return `<option value="${p.id}" ${p.id === slot.playerId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/守備${p.stats.fielding}・肩${p.stats.arm})${mismatchNote}</option>`;
+          return `<option value="${p.id}" ${p.id === slot.playerId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/守備${p.stats.fielding}・肩${p.stats.arm})</option>`;
         }))
         .join("");
       const currentPlayer = slot.playerId ? players.find(p => p.id === slot.playerId) : null;
@@ -2017,10 +2032,10 @@
 
       const disablePractice = matchPending || player.practicedThisWeek || injured;
       const buttonDisabled = disablePractice ? "disabled" : "";
-      let buttonLabel = "この内容で練習する";
-      if (injured) buttonLabel = "故障中は練習できません";
-      else if (matchPending) buttonLabel = "今週は公式戦のため練習できません";
-      else if (player.practicedThisWeek) buttonLabel = "今週は練習済み";
+      let buttonLabel = "練習する";
+      if (injured) buttonLabel = "故障中";
+      else if (matchPending) buttonLabel = "公式戦のため不可";
+      else if (player.practicedThisWeek) buttonLabel = "練習済み";
 
       div.innerHTML = `
         <span class="player-name">${player.name}</span>
