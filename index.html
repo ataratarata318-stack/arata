@@ -1320,11 +1320,40 @@
       }
     });
 
-    // 打順: 守備についた選手を打力・走力の高い順に並べる(強い打者ほど重みの大きい上位打順に入る)
-    const assignedIds = lineup.defense.map(s => s.playerId).filter(Boolean);
-    assignedIds.sort((a, b) => battingPower(players.find(p => p.id === b)) - battingPower(players.find(p => p.id === a)));
-    lineup.battingOrder = assignedIds.slice(0, 8);
-    while (lineup.battingOrder.length < 8) lineup.battingOrder.push(null);
+    // 打順: 実際の野球のセオリーに近い形で組む(4番に最強打者、3・5番に次点、1番は俊足優先)
+    const assignedPlayers = lineup.defense
+      .map(s => s.playerId)
+      .filter(Boolean)
+      .map(id => players.find(p => p.id === id));
+    const remaining = [...assignedPlayers].sort((a, b) => battingPower(b) - battingPower(a));
+
+    const order = new Array(8).fill(null);
+    const take = () => (remaining.length > 0 ? remaining.shift() : null);
+
+    const cleanup = take();  // 一番の強打者を4番に
+    const third = take();    // 次点を3番に
+    const fifth = take();    // その次を5番に
+
+    // 1番は残りの中で一番足が速い選手(俊足を出塁させて機動力を活かす)
+    let leadoff = null;
+    if (remaining.length > 0) {
+      const leadoffIndex = remaining.reduce(
+        (bestIdx, p, i, arr) => (p.stats.running > arr[bestIdx].stats.running ? i : bestIdx), 0
+      );
+      leadoff = remaining.splice(leadoffIndex, 1)[0];
+    }
+    const second = take(); // 残りで一番の打力を2番に
+
+    order[3] = cleanup ? cleanup.id : null;
+    order[2] = third ? third.id : null;
+    order[4] = fifth ? fifth.id : null;
+    order[0] = leadoff ? leadoff.id : null;
+    order[1] = second ? second.id : null;
+    order[5] = remaining[0] ? remaining[0].id : null;
+    order[6] = remaining[1] ? remaining[1].id : null;
+    order[7] = remaining[2] ? remaining[2].id : null;
+
+    lineup.battingOrder = order;
   }
 
   // 準決勝・決勝など大事な試合では、「精神力が強い」選手がスタメンにいるとチームの実効能力が少し上がる
@@ -1339,39 +1368,74 @@
     return 1 + count * 0.05;
   }
 
+  // チャンス・ピンチの具体的な場面(アウトカウント・走者)を作る
+  const RUNNER_SITUATIONS = [
+    { label: "ランナー一塁", runners: 1 },
+    { label: "ランナー二塁", runners: 1 },
+    { label: "ランナー三塁", runners: 1 },
+    { label: "ランナー一二塁", runners: 2 },
+    { label: "ランナー一三塁", runners: 2 },
+    { label: "ランナー二三塁", runners: 2 },
+    { label: "満塁", runners: 3 },
+  ];
+  const OUT_LABELS = ["ノーアウト", "ワンアウト", "ツーアウト"];
+
+  function generateSituation() {
+    const runner = RUNNER_SITUATIONS[Math.floor(Math.random() * RUNNER_SITUATIONS.length)];
+    const outs = Math.floor(Math.random() * 3); // 0〜2
+    return { runnerLabel: runner.label, runnerCount: runner.runners, outs };
+  }
+
+  function situationText(situation) {
+    return `${OUT_LABELS[situation.outs]}・${situation.runnerLabel}`;
+  }
+
+  // 攻撃側はアウトが少ないほど積極策が活きやすい(まだ後の打者にも回せるため)
+  function battingOutsModifier(outs) {
+    return [1.15, 1.0, 0.85][outs];
+  }
+
+  // 守備側はアウトが多いほど切り抜けやすい(あと少しでチェンジのため)
+  function pitchingOutsModifier(outs) {
+    return [0.85, 1.0, 1.15][outs];
+  }
+
   // 攻撃采配: バッターにどう打たせるか。チームの実効能力を上下させる(打力平均が高いほど積極策が活きる)
   const BATTING_APPROACHES = [
     { id: "power", label: "長打狙い", desc: "大きな当たりを狙う。ハマれば大量点、外れると無得点のことも" },
     { id: "swing", label: "強振", desc: "積極的に振っていく。長打狙いよりはやや手堅い" },
     { id: "meet", label: "ミート", desc: "当てることを優先する。安定した選択" },
-    { id: "bunt", label: "バント", desc: "手堅く走者を進める。確実だが大量点は望みにくい" },
+    { id: "bunt", label: "バント", desc: "手堅く走者を進める。2アウトでは使いにくい" },
     { id: "wait", label: "見送り", desc: "じっくり球を見極め、相手の乱れを待つ" },
   ];
 
-  // 攻撃采配の効果は「そのチャンスの回」に加わる得点のみ(試合全体には影響しない)
-  function resolveBattingApproach(approachId, battingPower) {
-    const scale = Math.max(0.5, Math.min(1.5, battingPower / 60));
+  // 攻撃采配の効果は「そのチャンスの回」に加わる得点のみ(試合全体には影響しない)。
+  // 走者の人数がその回で狙える得点の上限になり、アウトカウントが成功率に影響する
+  function resolveBattingApproach(approachId, battingPower, situation) {
+    const scale = Math.max(0.5, Math.min(1.5, battingPower / 60)) * battingOutsModifier(situation.outs);
+    const maxRuns = situation.runnerCount + 1; // 走者+バッター本人まで得点しうる
     let extraRuns = 0;
     let flavor = "";
     switch (approachId) {
       case "power":
-        if (Math.random() < 0.45 * scale) { extraRuns = 2 + Math.floor(Math.random() * 3); flavor = "積極的な長打狙いがハマり、一気に加点!"; }
+        if (Math.random() < 0.45 * scale) { extraRuns = Math.min(maxRuns, 2 + Math.floor(Math.random() * 3)); flavor = "積極的な長打狙いがハマり、一気に加点!"; }
         else { flavor = "大振りが響かず、この回は無得点だった。"; }
         break;
       case "swing":
-        if (Math.random() < 0.55 * scale) { extraRuns = 1 + Math.floor(Math.random() * 3); flavor = "強振の姿勢が実を結び加点した。"; }
+        if (Math.random() < 0.55 * scale) { extraRuns = Math.min(maxRuns, 1 + Math.floor(Math.random() * 3)); flavor = "強振の姿勢が実を結び加点した。"; }
         else { flavor = "強振したが仕留めきれなかった。"; }
         break;
       case "meet":
-        extraRuns = Math.random() < 0.75 ? 1 : 0;
-        flavor = extraRuns > 0 ? "手堅いミートで着実に1点を加えた。" : "ミートには成功したが得点には至らなかった。";
+        extraRuns = Math.random() < 0.75 ? Math.min(maxRuns, 1) : 0;
+        flavor = extraRuns > 0 ? "手堅いミートで着実に加点した。" : "ミートには成功したが得点には至らなかった。";
         break;
       case "bunt":
-        extraRuns = Math.random() < 0.7 ? 1 : 0;
-        flavor = extraRuns > 0 ? "確実なバントで走者を返した。" : "バントは決めたが得点には結びつかなかった。";
+        if (situation.outs === 2) { flavor = "ツーアウトのためバントは見送った。"; }
+        else if (Math.random() < 0.7) { extraRuns = Math.min(maxRuns, 1); flavor = "確実なバントで走者を返した。"; }
+        else { flavor = "バントは決めたが得点には結びつかなかった。"; }
         break;
       case "wait":
-        if (Math.random() < 0.4) { extraRuns = 1 + Math.floor(Math.random() * 2); flavor = "じっくり見極めて相手の隙を突き加点した。"; }
+        if (Math.random() < 0.4 * battingOutsModifier(situation.outs)) { extraRuns = Math.min(maxRuns, 1 + Math.floor(Math.random() * 2)); flavor = "じっくり見極めて相手の隙を突き加点した。"; }
         else { flavor = "好機を活かせず、この回は終わった。"; }
         break;
     }
@@ -1386,34 +1450,37 @@
     { id: "contact", label: "打たせて取る", desc: "スタミナを温存し、守備に頼る安定志向" },
   ];
 
-  // 守備采配の効果は「そのピンチの回」の相手の得点のみ増減させる(試合全体には影響しない)
-  function resolvePitchingApproach(approachId, pitcher) {
+  // 守備采配の効果は「そのピンチの回」の相手の得点のみ増減させる(試合全体には影響しない)。
+  // 走者の人数が失点の上限になり、アウトカウントが成功率に影響する
+  function resolvePitchingApproach(approachId, pitcher, situation) {
     const velocity = pitcher ? (pitcher.stats.velocity || 40) : 40;
     const breaking = pitcher ? (pitcher.stats.breaking || 40) : 40;
     const control = pitcher ? (pitcher.stats.control || 40) : 40;
+    const outsMod = pitchingOutsModifier(situation.outs);
+    const maxDamage = situation.runnerCount + 1;
     let reduction = 0; // 正なら相手の得点を減らす、負なら逆に痛打を浴びて増える
     let flavor = "";
     switch (approachId) {
       case "fastball": {
-        const scale = Math.max(0.5, Math.min(1.5, velocity / 60));
-        if (Math.random() < 0.5 * scale) { reduction = 2 + Math.floor(Math.random() * 2); flavor = "力強い直球でピンチを断ち切った。"; }
-        else { reduction = -(1 + Math.floor(Math.random() * 2)); flavor = "直球を狙い打たれ、痛打を浴びてしまった。"; }
+        const scale = Math.max(0.5, Math.min(1.5, velocity / 60)) * outsMod;
+        if (Math.random() < 0.5 * scale) { reduction = Math.min(maxDamage, 2 + Math.floor(Math.random() * 2)); flavor = "力強い直球でピンチを断ち切った。"; }
+        else { reduction = -Math.min(maxDamage, 1 + Math.floor(Math.random() * 2)); flavor = "直球を狙い打たれ、痛打を浴びてしまった。"; }
         break;
       }
       case "breaking": {
-        const scale = Math.max(0.5, Math.min(1.5, breaking / 60));
-        reduction = Math.random() < 0.55 * scale ? (1 + Math.floor(Math.random() * 2)) : 0;
+        const scale = Math.max(0.5, Math.min(1.5, breaking / 60)) * outsMod;
+        reduction = Math.random() < 0.55 * scale ? Math.min(maxDamage, 1 + Math.floor(Math.random() * 2)) : 0;
         flavor = reduction > 0 ? "切れ味鋭い変化球で打ち取った。" : "変化球を見極められてしまった。";
         break;
       }
       case "strikeout": {
-        const scale = Math.max(0.5, Math.min(1.5, control / 60));
-        if (Math.random() < 0.45 * scale) { reduction = 2 + Math.floor(Math.random() * 2); flavor = "三振の山を築き、危機を脱した。"; }
-        else { reduction = -(1 + Math.floor(Math.random() * 2)); flavor = "力んで制球を乱し、走者を溜めてしまった。"; }
+        const scale = Math.max(0.5, Math.min(1.5, control / 60)) * outsMod;
+        if (Math.random() < 0.45 * scale) { reduction = Math.min(maxDamage, 2 + Math.floor(Math.random() * 2)); flavor = "三振の山を築き、危機を脱した。"; }
+        else { reduction = -Math.min(maxDamage, 1 + Math.floor(Math.random() * 2)); flavor = "力んで制球を乱し、走者を溜めてしまった。"; }
         break;
       }
       case "contact":
-        reduction = Math.random() < 0.8 ? 1 : 0;
+        reduction = Math.random() < 0.8 * Math.min(1, outsMod) ? 1 : 0;
         flavor = reduction > 0 ? "堅実な投球と守備でピンチをしのいだ。" : "打たせて取る作戦だったが打球が抜けた。";
         break;
     }
@@ -1670,10 +1737,12 @@
     const base = computeBaseMatchNumbers({ roundNumber, roundsToWin: windowT.roundsToWin }, state.previewOpponent);
     const { teamRuns, oppRuns } = simulateInnings(base.winProbability);
     const { chanceInning, pinchInning } = pickChanceAndPinchInnings();
+    const chanceSituation = generateSituation();
+    const pinchSituation = generateSituation();
 
     pendingMatch = {
       windowT, state, roundNumber, label, base,
-      teamRuns, oppRuns, chanceInning, pinchInning,
+      teamRuns, oppRuns, chanceInning, pinchInning, chanceSituation, pinchSituation,
       phase: "batting", battingFlavor: "",
     };
 
@@ -1687,12 +1756,12 @@
   function renderTacticsUI() {
     tacticsCard.style.display = "block";
     if (pendingMatch.phase === "batting") {
-      tacticsPrompt.textContent = `${pendingMatch.chanceInning + 1}回、チャンスの場面。どう攻める?`;
+      tacticsPrompt.textContent = `${pendingMatch.chanceInning + 1}回 ${situationText(pendingMatch.chanceSituation)}のチャンス。どう攻める?`;
       tacticsOptions.innerHTML = BATTING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
     } else {
-      tacticsPrompt.textContent = `${pendingMatch.pinchInning + 1}回、ピンチの場面。どう抑える?`;
+      tacticsPrompt.textContent = `${pendingMatch.pinchInning + 1}回 ${situationText(pendingMatch.pinchSituation)}のピンチ。どう抑える?`;
       tacticsOptions.innerHTML = PITCHING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
@@ -1704,18 +1773,18 @@
     if (!approachId || !pendingMatch) return;
 
     if (pendingMatch.phase === "batting") {
-      const { extraRuns, flavor } = resolveBattingApproach(approachId, averageBattingPower());
+      const { extraRuns, flavor } = resolveBattingApproach(approachId, averageBattingPower(), pendingMatch.chanceSituation);
       pendingMatch.teamRuns[pendingMatch.chanceInning] += extraRuns;
-      pendingMatch.battingFlavor = `【${pendingMatch.chanceInning + 1}回・攻撃采配:${BATTING_APPROACHES.find(a => a.id === approachId).label}】${flavor}`;
+      pendingMatch.battingFlavor = `【${pendingMatch.chanceInning + 1}回${situationText(pendingMatch.chanceSituation)}・攻撃采配:${BATTING_APPROACHES.find(a => a.id === approachId).label}】${flavor}`;
       pendingMatch.phase = "pitching";
       renderTacticsUI();
       return;
     }
 
     // 守備采配が決まったら、その回の相手の得点を増減させたうえで試合を確定する
-    const { windowT, state, roundNumber, label, base, teamRuns, oppRuns, pinchInning, battingFlavor } = pendingMatch;
+    const { windowT, state, roundNumber, label, base, teamRuns, oppRuns, pinchInning, pinchSituation, battingFlavor } = pendingMatch;
     const pitcher = players.find(p => p.id === lineup.pitcherId);
-    const { reduction, flavor: pitchingFlavor } = resolvePitchingApproach(approachId, pitcher);
+    const { reduction, flavor: pitchingFlavor } = resolvePitchingApproach(approachId, pitcher, pinchSituation);
     oppRuns[pinchInning] = Math.max(0, oppRuns[pinchInning] - reduction);
 
     const result = finishMatch(base, teamRuns, oppRuns);
@@ -1738,7 +1807,7 @@
     if (result.isWin && state.champion) {
       reportLabel += `(優勝!)`;
     }
-    const pitchingFlavorLine = `【${pinchInning + 1}回・守備采配:${PITCHING_APPROACHES.find(a => a.id === approachId).label}】${pitchingFlavor}`;
+    const pitchingFlavorLine = `【${pinchInning + 1}回${situationText(pinchSituation)}・守備采配:${PITCHING_APPROACHES.find(a => a.id === approachId).label}】${pitchingFlavor}`;
     officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result, [battingFlavor, pitchingFlavorLine]);
 
     pendingMatch = null;
