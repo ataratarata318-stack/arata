@@ -1582,18 +1582,13 @@
   }
 
   // 攻撃2回・守備2回、計4回の采配ポイントを選ぶ(重複しない・回の早い順)。
-  // 試合ごとにタイミングがばらつくよう2回〜9回の広い範囲から選び、さらに約半分の試合では
-  // 緊迫した最終回(9回)に必ず采配が絡むようにする
+  // 残り3つは2回〜8回からランダムに選びタイミングを試合ごとにばらつかせつつ、
+  // 最終回(9回)は毎試合必ず采配ポイントに含め、最終回の逆転劇が演出から漏れないようにする
   function pickTacticsDecisions() {
-    const allInnings = [1, 2, 3, 4, 5, 6, 7, 8];
+    const otherInnings = [1, 2, 3, 4, 5, 6, 7];
     const lastInning = INNING_COUNT - 1;
-    let pool;
-    if (Math.random() < 0.5) {
-      const rest = shuffleArray(allInnings.filter(i => i !== lastInning)).slice(0, 3);
-      pool = shuffleArray([...rest, lastInning]);
-    } else {
-      pool = shuffleArray(allInnings).slice(0, 4);
-    }
+    const rest = shuffleArray(otherInnings).slice(0, 3);
+    const pool = shuffleArray([...rest, lastInning]);
     const decisions = [
       { type: "batting", inning: pool[0], situation: generateSituation() },
       { type: "batting", inning: pool[1], situation: generateSituation() },
