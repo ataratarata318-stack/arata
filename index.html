@@ -1547,12 +1547,26 @@
     return { teamRuns, oppRuns };
   }
 
-  // 攻撃のチャンス・守備のピンチとなる回を、中盤〜終盤からランダムに2つ選ぶ(重複しない)
-  function pickChanceAndPinchInnings() {
-    const pool = [3, 4, 5, 6, 7, 8];
-    const chanceInning = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-    const pinchInning = pool[Math.floor(Math.random() * pool.length)];
-    return { chanceInning, pinchInning };
+  function shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // 攻撃2回・守備2回、計4回の采配ポイントを中盤〜終盤からランダムに選ぶ(重複しない・回の早い順)
+  function pickTacticsDecisions() {
+    const pool = shuffleArray([3, 4, 5, 6, 7, 8]).slice(0, 4);
+    const decisions = [
+      { type: "batting", inning: pool[0], situation: generateSituation() },
+      { type: "batting", inning: pool[1], situation: generateSituation() },
+      { type: "pitching", inning: pool[2], situation: generateSituation() },
+      { type: "pitching", inning: pool[3], situation: generateSituation() },
+    ];
+    decisions.sort((a, b) => a.inning - b.inning);
+    return decisions;
   }
 
   // 得点が同点の場合は、実力どおりの確率でどちらかに決勝点を与える
@@ -1731,9 +1745,8 @@
     nextWeekButton.disabled = !canAdvanceWeek();
   }
 
-  // 公式戦は「攻撃采配→守備采配→結果」の2段階で進む。ここで試合を始め、まず攻撃采配を尋ねる
-  // 公式戦は9イニングをまず素点でシミュレートし、その中の「チャンスの回」「ピンチの回」でだけ
-  // 采配を挟む。采配の効果はその回の得点にだけ効き、それ以外のイニングには影響しない
+  // 公式戦は9イニングをまず素点でシミュレートし、その中の「チャンスの回」2つ・「ピンチの回」2つ、
+  // 計4回だけ采配を挟む(回の早い順に尋ねる)。采配の効果はその回の得点にだけ効き、それ以外のイニングには影響しない
   officialMatchButton.addEventListener("click", () => {
     if (!lineup.pitcherId) {
       alert("スタメンに投手がいません。「スタメン・守備・打順」で先発投手を選んでください。");
@@ -1747,14 +1760,11 @@
     const label = roundLabel(windowT.roundsToWin, roundNumber);
     const base = computeBaseMatchNumbers({ roundNumber, roundsToWin: windowT.roundsToWin }, state.previewOpponent);
     const { teamRuns, oppRuns } = simulateInnings(base.winProbability);
-    const { chanceInning, pinchInning } = pickChanceAndPinchInnings();
-    const chanceSituation = generateSituation();
-    const pinchSituation = generateSituation();
+    const decisions = pickTacticsDecisions();
 
     pendingMatch = {
       windowT, state, roundNumber, label, base,
-      teamRuns, oppRuns, chanceInning, pinchInning, chanceSituation, pinchSituation,
-      phase: "batting", battingFlavor: "",
+      teamRuns, oppRuns, decisions, decisionIndex: 0, flavorLines: [],
     };
 
     officialMatchButton.style.display = "none";
@@ -1766,17 +1776,17 @@
 
   function renderTacticsUI() {
     tacticsCard.style.display = "block";
-    if (pendingMatch.phase === "batting") {
-      const teamScore = scoreThroughInning(pendingMatch.teamRuns, pendingMatch.chanceInning);
-      const oppScore = scoreThroughInning(pendingMatch.oppRuns, pendingMatch.chanceInning);
-      tacticsPrompt.textContent = `${pendingMatch.chanceInning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(pendingMatch.chanceSituation)}のチャンス。どう攻める?`;
+    const decision = pendingMatch.decisions[pendingMatch.decisionIndex];
+    const teamScore = scoreThroughInning(pendingMatch.teamRuns, decision.inning);
+    const oppScore = scoreThroughInning(pendingMatch.oppRuns, decision.inning);
+    const stepText = `【采配 ${pendingMatch.decisionIndex + 1}/${pendingMatch.decisions.length}】`;
+    if (decision.type === "batting") {
+      tacticsPrompt.textContent = `${stepText} ${decision.inning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(decision.situation)}のチャンス。どう攻める?`;
       tacticsOptions.innerHTML = BATTING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
     } else {
-      const teamScore = scoreThroughInning(pendingMatch.teamRuns, pendingMatch.pinchInning);
-      const oppScore = scoreThroughInning(pendingMatch.oppRuns, pendingMatch.pinchInning);
-      tacticsPrompt.textContent = `${pendingMatch.pinchInning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(pendingMatch.pinchSituation)}のピンチ。どう抑える?`;
+      tacticsPrompt.textContent = `${stepText} ${decision.inning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(decision.situation)}のピンチ。どう抑える?`;
       tacticsOptions.innerHTML = PITCHING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
@@ -1787,21 +1797,55 @@
     const approachId = event.target.dataset.approach;
     if (!approachId || !pendingMatch) return;
 
-    if (pendingMatch.phase === "batting") {
-      const { extraRuns, flavor } = resolveBattingApproach(approachId, averageBattingPower(), pendingMatch.chanceSituation);
-      pendingMatch.teamRuns[pendingMatch.chanceInning] += extraRuns;
-      pendingMatch.battingFlavor = `【${pendingMatch.chanceInning + 1}回${situationText(pendingMatch.chanceSituation)}・攻撃采配:${BATTING_APPROACHES.find(a => a.id === approachId).label}】${flavor}`;
-      pendingMatch.phase = "pitching";
+    const decision = pendingMatch.decisions[pendingMatch.decisionIndex];
+    const { teamRuns, oppRuns } = pendingMatch;
+
+    if (decision.type === "batting") {
+      const { extraRuns, flavor } = resolveBattingApproach(approachId, averageBattingPower(), decision.situation);
+      teamRuns[decision.inning] += extraRuns;
+      const after = teamRuns[decision.inning];
+      const teamScore = scoreThroughInning(teamRuns, decision.inning + 1);
+      const oppScore = scoreThroughInning(oppRuns, decision.inning + 1);
+      const effectText = extraRuns > 0
+        ? `${extraRuns}点を追加(この回${after}点)`
+        : `追加点はならず(この回${after}点)`;
+      const approachLabel = BATTING_APPROACHES.find(a => a.id === approachId).label;
+      pendingMatch.flavorLines.push(
+        `【${decision.inning + 1}回${situationText(decision.situation)}・攻撃采配:${approachLabel}】${flavor} ${effectText}、通算${teamScore}-${oppScore}。`
+      );
+    } else {
+      const before = oppRuns[decision.inning];
+      const pitcher = players.find(p => p.id === lineup.pitcherId);
+      const { reduction, flavor } = resolvePitchingApproach(approachId, pitcher, decision.situation);
+      oppRuns[decision.inning] = Math.max(0, before - reduction);
+      const after = oppRuns[decision.inning];
+      const changed = before - after; // 正なら失点を防いだ、負なら余計に失点した
+      const teamScore = scoreThroughInning(teamRuns, decision.inning + 1);
+      const oppScore = scoreThroughInning(oppRuns, decision.inning + 1);
+      let effectText;
+      if (reduction > 0) {
+        effectText = changed > 0
+          ? `${changed}点を阻止(この回の失点${after}点)`
+          : `もともと無失点の場面で実害はなし(この回の失点${after}点)`;
+      } else if (reduction < 0) {
+        effectText = `${-changed}点を余計に献上(この回の失点${after}点)`;
+      } else {
+        effectText = `失点は防げず(この回の失点${after}点)`;
+      }
+      const approachLabel = PITCHING_APPROACHES.find(a => a.id === approachId).label;
+      pendingMatch.flavorLines.push(
+        `【${decision.inning + 1}回${situationText(decision.situation)}・守備采配:${approachLabel}】${flavor} ${effectText}、通算${teamScore}-${oppScore}。`
+      );
+    }
+
+    pendingMatch.decisionIndex++;
+    if (pendingMatch.decisionIndex < pendingMatch.decisions.length) {
       renderTacticsUI();
       return;
     }
 
-    // 守備采配が決まったら、その回の相手の得点を増減させたうえで試合を確定する
-    const { windowT, state, roundNumber, label, base, teamRuns, oppRuns, pinchInning, pinchSituation, battingFlavor } = pendingMatch;
-    const pitcher = players.find(p => p.id === lineup.pitcherId);
-    const { reduction, flavor: pitchingFlavor } = resolvePitchingApproach(approachId, pitcher, pinchSituation);
-    oppRuns[pinchInning] = Math.max(0, oppRuns[pinchInning] - reduction);
-
+    // 全ての采配が終わったので試合を確定する
+    const { windowT, state, roundNumber, label, base, flavorLines } = pendingMatch;
     const result = finishMatch(base, teamRuns, oppRuns);
 
     if (result.isWin) {
@@ -1822,8 +1866,7 @@
     if (result.isWin && state.champion) {
       reportLabel += `(優勝!)`;
     }
-    const pitchingFlavorLine = `【${pinchInning + 1}回${situationText(pinchSituation)}・守備采配:${PITCHING_APPROACHES.find(a => a.id === approachId).label}】${pitchingFlavor}`;
-    officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result, [battingFlavor, pitchingFlavorLine]);
+    officialMatchResult.innerHTML = buildMatchReportHtml(reportLabel, result, flavorLines);
 
     pendingMatch = null;
     tacticsCard.style.display = "none";
