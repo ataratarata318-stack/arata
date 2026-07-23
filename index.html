@@ -977,7 +977,7 @@
       const optionsHtml = [`<option value="">-- 空き --</option>`]
         .concat(selectable.map(p => {
           const mismatchNote = p.position === slot.role ? "" : " ※適性外-15%";
-          return `<option value="${p.id}" ${p.id === slot.playerId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/${playerRankLabel(p)})${mismatchNote}</option>`;
+          return `<option value="${p.id}" ${p.id === slot.playerId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/${playerGradeLabel(p)}/守備${p.stats.fielding}・肩${p.stats.arm})${mismatchNote}</option>`;
         }))
         .join("");
       const currentPlayer = slot.playerId ? players.find(p => p.id === slot.playerId) : null;
@@ -1002,7 +1002,7 @@
       const selectable = assignedPlayers.filter(p => !usedElsewhere.includes(p.id));
       const currentId = lineup.battingOrder[slot];
       const optionsHtml = [`<option value="">-- 空き --</option>`]
-        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]})</option>`))
+        .concat(selectable.map(p => `<option value="${p.id}" ${p.id === currentId ? "selected" : ""}>${p.name}(${positionLabels[p.position]}/打${p.stats.batting}・走${p.stats.running})</option>`))
         .join("");
       const row = document.createElement("div");
       row.className = "lineup-row";
@@ -1246,7 +1246,17 @@
     return player.position === role ? 1.0 : 0.85;
   }
 
-  // スタメンに入っている選手だけで試合の力を計算する。打順(何番を打つか)の1〜5番は少し重みを大きくする
+  // 守備の実力は「守備力」と「肩力」だけで決まる(打力・走力は関係ない)
+  function defensePower(player) {
+    return (player.stats.fielding || 0) + (player.stats.arm || 0);
+  }
+
+  // 打撃の実力は「打力」と「走力」だけで決まる(守備力・肩力は関係ない)
+  function battingPower(player) {
+    return (player.stats.batting || 0) + (player.stats.running || 0);
+  }
+
+  // スタメンに入っている選手だけで試合の力を計算する。守備は守備力・肩力、打撃は打力・走力で別々に評価する
   function totalLineupPower() {
     let sum = 0;
     const pitcher = players.find(p => p.id === lineup.pitcherId);
@@ -1256,10 +1266,17 @@
       if (!slot.playerId) return;
       const p = players.find(pl => pl.id === slot.playerId);
       if (!p) return;
-      const battingIndex = lineup.battingOrder.indexOf(slot.playerId);
-      const battingWeight = (battingIndex !== -1 && battingIndex < 5) ? 1.15 : 1.0;
-      sum += playerPowerSum(p) * battingWeight * defenseFitMultiplier(p, slot.role);
+      sum += defensePower(p) * defenseFitMultiplier(p, slot.role);
     });
+
+    lineup.battingOrder.forEach((id, idx) => {
+      if (!id) return;
+      const p = players.find(pl => pl.id === id);
+      if (!p) return;
+      const battingWeight = idx < 5 ? 1.15 : 1.0;
+      sum += battingPower(p) * battingWeight;
+    });
+
     return sum;
   }
 
@@ -1289,12 +1306,12 @@
     const availableFielders = players.filter(p => p.position !== "pitcher" && isFitToPlay(p));
     const usedIds = new Set();
     lineup.defense.forEach(slot => {
-      // まず本来のポジションに合う選手の中で一番強い人を探す(いなければ他の選手で代用)
+      // まず本来のポジションに合う選手の中で守備力・肩力が一番高い人を探す(いなければ他の選手で代用)
       let candidates = availableFielders.filter(p => p.position === slot.role && !usedIds.has(p.id));
       if (candidates.length === 0) {
         candidates = availableFielders.filter(p => !usedIds.has(p.id));
       }
-      candidates.sort((a, b) => playerPowerSum(b) - playerPowerSum(a));
+      candidates.sort((a, b) => defensePower(b) - defensePower(a));
       if (candidates[0]) {
         slot.playerId = candidates[0].id;
         usedIds.add(candidates[0].id);
@@ -1303,9 +1320,9 @@
       }
     });
 
-    // 打順: 守備についた選手を能力の高い順に並べる(強い選手ほど重みの大きい上位打順に入る)
+    // 打順: 守備についた選手を打力・走力の高い順に並べる(強い打者ほど重みの大きい上位打順に入る)
     const assignedIds = lineup.defense.map(s => s.playerId).filter(Boolean);
-    assignedIds.sort((a, b) => playerPowerSum(players.find(p => p.id === b)) - playerPowerSum(players.find(p => p.id === a)));
+    assignedIds.sort((a, b) => battingPower(players.find(p => p.id === b)) - battingPower(players.find(p => p.id === a)));
     lineup.battingOrder = assignedIds.slice(0, 8);
     while (lineup.battingOrder.length < 8) lineup.battingOrder.push(null);
   }
