@@ -1390,6 +1390,17 @@
     return `${OUT_LABELS[situation.outs]}・${situation.runnerLabel}`;
   }
 
+  // その回が始まる時点までの得点(緊迫感を出すため、チャンス・ピンチの場面で表示する)
+  function scoreThroughInning(runs, inningIndex) {
+    return runs.slice(0, inningIndex).reduce((a, b) => a + b, 0);
+  }
+
+  function scoreSituationText(teamScore, oppScore) {
+    if (teamScore === oppScore) return `${teamScore}-${oppScore}の同点`;
+    if (teamScore > oppScore) return `${teamScore}-${oppScore}とリードした状況`;
+    return `${teamScore}-${oppScore}のビハインド`;
+  }
+
   // 攻撃側はアウトが少ないほど積極策が活きやすい(まだ後の打者にも回せるため)
   function battingOutsModifier(outs) {
     return [1.15, 1.0, 0.85][outs];
@@ -1650,7 +1661,7 @@
       }
       player.stats[def.key] = Math.min(STAT_CAP, player.stats[def.key] + gain);
 
-      let fatigueGain = 5 + Math.floor(Math.random() * 6); // 5〜10
+      let fatigueGain = 3 + Math.floor(Math.random() * 4); // 3〜6
       if (personality && personality.id === "durable") fatigueGain = Math.round(fatigueGain * 0.7);
       player.fatigue = Math.min(100, (player.fatigue || 0) + fatigueGain);
     });
@@ -1756,12 +1767,16 @@
   function renderTacticsUI() {
     tacticsCard.style.display = "block";
     if (pendingMatch.phase === "batting") {
-      tacticsPrompt.textContent = `${pendingMatch.chanceInning + 1}回 ${situationText(pendingMatch.chanceSituation)}のチャンス。どう攻める?`;
+      const teamScore = scoreThroughInning(pendingMatch.teamRuns, pendingMatch.chanceInning);
+      const oppScore = scoreThroughInning(pendingMatch.oppRuns, pendingMatch.chanceInning);
+      tacticsPrompt.textContent = `${pendingMatch.chanceInning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(pendingMatch.chanceSituation)}のチャンス。どう攻める?`;
       tacticsOptions.innerHTML = BATTING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
     } else {
-      tacticsPrompt.textContent = `${pendingMatch.pinchInning + 1}回 ${situationText(pendingMatch.pinchSituation)}のピンチ。どう抑える?`;
+      const teamScore = scoreThroughInning(pendingMatch.teamRuns, pendingMatch.pinchInning);
+      const oppScore = scoreThroughInning(pendingMatch.oppRuns, pendingMatch.pinchInning);
+      tacticsPrompt.textContent = `${pendingMatch.pinchInning + 1}回 ${scoreSituationText(teamScore, oppScore)}、${situationText(pendingMatch.pinchSituation)}のピンチ。どう抑える?`;
       tacticsOptions.innerHTML = PITCHING_APPROACHES
         .map(a => `<button class="tactics-button" data-approach="${a.id}" title="${a.desc}">${a.label}</button>`)
         .join("");
@@ -1850,6 +1865,8 @@
       if (p.injuryWeeksLeft > 0) {
         p.injuryWeeksLeft--;
         p.fatigue = Math.max(0, (p.fatigue || 0) - 15); // 療養中は疲労も回復していく
+      } else {
+        p.fatigue = Math.max(0, (p.fatigue || 0) - 4); // 通常の週も、寝る間などで少しずつ疲労が抜けていく
       }
     });
 
@@ -1972,7 +1989,7 @@
     }
     player.stats[statKey] = Math.min(STAT_CAP, player.stats[statKey] + gain);
 
-    let fatigueGain = 15 + Math.floor(Math.random() * 11); // 15〜25 疲労が溜まる
+    let fatigueGain = 8 + Math.floor(Math.random() * 8); // 8〜15 疲労が溜まる
     if (personality && personality.id === "durable") fatigueGain = Math.round(fatigueGain * 0.7); // 丈夫: 疲労が溜まりにくい
     player.fatigue = Math.min(100, (player.fatigue || 0) + fatigueGain);
 
