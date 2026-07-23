@@ -6,6 +6,17 @@
 <meta name="theme-color" content="#1a5d2b">
 <title>高校野球 選手育成シミュレーション</title>
 <style>
+  :root {
+    --green-deep: #1a5d2b;
+    --green-fresh: #2e9e49;
+    --blue-sky: #2f9bda;
+    --purple-team: #6a4fb3;
+    --red-team: #c62828;
+    --gold-sun: #e0a800;
+    --bg-top: #eaf6f0;
+    --bg-bottom: #f2f5f0;
+    --shadow-tint: rgba(26,93,43,0.14);
+  }
   * {
     box-sizing: border-box;
   }
@@ -14,7 +25,7 @@
   }
   body {
     font-family: "Hiragino Sans", "Meiryo", sans-serif;
-    background: #f2f5f0;
+    background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 320px);
     margin: 0;
     padding: 12px;
     color: #222;
@@ -23,16 +34,18 @@
   h1 {
     font-size: 20px;
     text-align: center;
-    color: #1a5d2b;
+    color: var(--green-deep);
+    letter-spacing: 0.5px;
     margin: 8px 0 12px;
   }
   .card {
     background: white;
-    border-radius: 12px;
+    border-radius: 14px;
+    border-top: 4px solid var(--green-fresh);
     padding: 14px 16px;
     max-width: 480px;
     margin: 12px auto;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 10px var(--shadow-tint);
   }
   label {
     display: block;
@@ -51,10 +64,10 @@
   button {
     margin-top: 16px;
     padding: 12px 16px;
-    background: #1a5d2b;
+    background: var(--green-fresh);
     color: white;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     font-size: 15px;
     cursor: pointer;
     width: 100%;
@@ -66,9 +79,11 @@
   }
   .calendar-line {
     text-align: center;
-    font-size: 18px;
+    font-size: 19px;
     font-weight: bold;
-    color: #1a5d2b;
+    color: var(--green-deep);
+    letter-spacing: 0.3px;
+    font-variant-numeric: tabular-nums;
   }
   .status-line {
     text-align: center;
@@ -78,7 +93,7 @@
     min-height: 18px;
   }
   .official-match-button {
-    background: #b3261e;
+    background: var(--red-team);
   }
   #official-match-result, #practice-game-result, #season-event-result {
     margin-top: 12px;
@@ -88,7 +103,7 @@
     min-height: 18px;
   }
   #season-event-result {
-    color: #6a4fb3;
+    color: var(--purple-team);
     font-weight: bold;
   }
   .match-outcome {
@@ -96,8 +111,8 @@
     font-weight: bold;
     margin-bottom: 8px;
   }
-  .match-outcome.win { color: #1a5d2b; }
-  .match-outcome.lose { color: #b3261e; }
+  .match-outcome.win { color: var(--green-deep); }
+  .match-outcome.lose { color: var(--red-team); }
   .opponent-line {
     font-size: 12px;
     color: #555;
@@ -106,7 +121,7 @@
   #match-preview {
     background: #fff7e0;
     border: 1px solid #e0c060;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 8px 10px;
     margin-top: 8px;
     font-size: 12px;
@@ -114,12 +129,12 @@
   }
   #match-preview .preview-stakes {
     font-weight: bold;
-    color: #b3261e;
+    color: var(--red-team);
     margin-top: 4px;
   }
   #tactics-card {
-    background: #eef3ec;
-    border-radius: 6px;
+    background: var(--bg-top);
+    border-radius: 8px;
     padding: 10px;
     margin-top: 8px;
   }
@@ -141,7 +156,7 @@
     padding: 10px 6px;
     font-size: 13px;
     min-height: 44px;
-    background: #3d7dd6;
+    background: var(--blue-sky);
   }
   .box-score-wrap {
     overflow-x: auto;
@@ -157,7 +172,7 @@
     text-align: center;
   }
   .box-score th {
-    background: #eef3ec;
+    background: var(--bg-top);
   }
   .commentary-lines {
     margin-top: 8px;
@@ -174,14 +189,14 @@
     margin-top: 8px;
     font-size: 13px;
     font-weight: bold;
-    color: #e0a800;
+    color: var(--gold-sun);
   }
   .player {
-    border-left: 4px solid #1a5d2b;
+    border-left: 4px solid var(--green-fresh);
     padding: 8px 12px;
     margin-top: 10px;
     background: #f7faf6;
-    border-radius: 4px;
+    border-radius: 6px;
   }
   .player-name {
     font-weight: bold;
@@ -190,19 +205,19 @@
   .player-pos, .player-grade {
     display: inline-block;
     font-size: 12px;
-    background: #1a5d2b;
+    background: var(--green-deep);
     color: white;
     padding: 2px 8px;
     border-radius: 10px;
     margin-left: 6px;
   }
   .player-grade {
-    background: #666;
+    background: #667066;
   }
   .talent-badge {
     display: inline-block;
     font-size: 12px;
-    background: #e0a800;
+    background: var(--gold-sun);
     color: white;
     padding: 2px 8px;
     border-radius: 10px;
@@ -211,7 +226,7 @@
   .injury-badge {
     display: inline-block;
     font-size: 12px;
-    background: #b3261e;
+    background: var(--red-team);
     color: white;
     padding: 2px 8px;
     border-radius: 10px;
@@ -220,7 +235,7 @@
   .personality-badge {
     display: inline-block;
     font-size: 12px;
-    background: #6a4fb3;
+    background: var(--purple-team);
     color: white;
     padding: 2px 8px;
     border-radius: 10px;
@@ -232,9 +247,9 @@
     margin-top: 4px;
     font-weight: bold;
   }
-  .fatigue-line.fatigue-ok { color: #1a5d2b; }
-  .fatigue-line.fatigue-warn { color: #e0a800; }
-  .fatigue-line.fatigue-danger { color: #b3261e; }
+  .fatigue-line.fatigue-ok { color: var(--green-deep); }
+  .fatigue-line.fatigue-warn { color: var(--gold-sun); }
+  .fatigue-line.fatigue-danger { color: var(--red-team); }
   .rank-badge {
     display: inline-block;
     font-size: 12px;
@@ -271,7 +286,7 @@
     padding: 10px 12px;
     font-size: 13px;
     min-height: 44px;
-    background: #3d7dd6;
+    background: var(--blue-sky);
   }
   .empty-note {
     text-align: center;
@@ -283,7 +298,7 @@
     text-align: center;
     font-size: 15px;
     font-weight: bold;
-    color: #1a5d2b;
+    color: var(--green-deep);
     margin-bottom: 4px;
   }
   .bulk-row {
@@ -309,14 +324,14 @@
     padding: 10px 12px;
     font-size: 13px;
     min-height: 44px;
-    background: #6a4fb3;
+    background: var(--purple-team);
   }
   .scout-recruit-button {
     margin-top: 8px;
     padding: 10px 14px;
     font-size: 13px;
     min-height: 44px;
-    background: #1a5d2b;
+    background: var(--green-fresh);
   }
   .lineup-row {
     display: flex;
@@ -335,7 +350,7 @@
   }
   .mismatch-badge {
     font-size: 12px;
-    color: #b3261e;
+    color: var(--red-team);
   }
   .rival-row {
     display: flex;
@@ -372,10 +387,10 @@
 <h1>⚾ 高校野球 選手育成シミュレーション</h1>
 
 <div style="text-align:center; max-width:480px; margin:0 auto; display:flex; flex-wrap:wrap; gap:8px; justify-content:center;">
-  <button id="export-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#3d7dd6;">セーブデータを書き出す</button>
-  <button id="import-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#3d7dd6;">セーブデータを読み込む</button>
+  <button id="export-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:var(--blue-sky);">セーブデータを書き出す</button>
+  <button id="import-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:var(--blue-sky);">セーブデータを読み込む</button>
   <input type="file" id="import-file-input" accept="application/json" style="display:none;">
-  <button id="reset-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:#b3261e;">データをリセットして最初から</button>
+  <button id="reset-button" style="width:auto; margin-top:0; padding:10px 14px; font-size:13px; min-height:44px; background:var(--red-team);">データをリセットして最初から</button>
 </div>
 
 <div class="card">
@@ -407,7 +422,7 @@
 <div class="card">
   <h2 style="font-size:16px; margin-top:0;">スタメン・守備・打順</h2>
   <div class="empty-note" style="margin-top:0;">試合はここで選んだ9人だけで戦います。出場した選手だけ試合の経験で能力が伸びます。守備位置と打順(何番を打つか)は別々に設定できます。</div>
-  <button id="auto-lineup-button" style="background:#6a4fb3;">最適なスタメンを自動セット</button>
+  <button id="auto-lineup-button" style="background:var(--purple-team);">最適なスタメンを自動セット</button>
   <label>先発投手</label>
   <select id="lineup-pitcher-select"></select>
   <label style="margin-top:12px;">守備位置(誰がどこを守るか)</label>
